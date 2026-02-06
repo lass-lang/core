@@ -1,0 +1,42 @@
+{
+  "name": "@lass-lang/core",
+  "version": "0.0.1",
+  "description": "Lass language transpiler core",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@lass-lang/axioms": "workspace:*",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "keywords": [
+    "lass",
+    "css",
+    "transpiler"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lass-lang/core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lass-lang/core/issues"
+  },
+  "homepage": "https://github.com/lass-lang/core#readme"
+}
