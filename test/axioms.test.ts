@@ -21,10 +21,17 @@ import { transpile } from '../src/index.js';
  * Uses dynamic import with data URL to execute the JS module.
  */
 async function executeTranspiledCode(code: string): Promise<string> {
-  // Create a data URL module and import it
-  const dataUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(code)}`;
-  const module = await import(dataUrl);
-  return module.default;
+  // Suppress console.log during preamble execution to keep test output clean
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const dataUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(code)}`;
+    const module = await import(dataUrl);
+    return module.default;
+  } finally {
+    console.log = originalLog;
+  }
 }
 
 /**
