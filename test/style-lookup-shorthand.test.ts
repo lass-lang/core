@@ -333,5 +333,23 @@ describe('Transpiler @prop integration', () => {
       // @border in string inside {{ }} is preserved as-is
       expect(css).toContain("color: @border;");
     });
+
+    it('should detect @prop inside @{ } within {{ }}', () => {
+      // Tests the context stack: {{ pushes js, @{ pushes css inside js
+      // @prop shorthand IS detected in @{ } css context
+      const css = '.box { border: 1px; margin: {{ @{ @border } }}; }';
+      const shorthands = Scanner.findStyleLookupShorthandsStatic(css);
+      expect(shorthands).toHaveLength(1);
+      expect(shorthands[0]!.propName).toBe('border');
+    });
+
+    it('should handle }} closing @{ context correctly', () => {
+      // Edge case: }} appears while inside @{ context (malformed but handled)
+      // The scanner should pop @{ contexts to find the js context
+      const css = '.box { color: {{ @{ content: @val }} extra }}; }';
+      const shorthands = Scanner.findStyleLookupShorthandsStatic(css);
+      // @val is inside @{ } which is inside {{ }}, so it IS detected
+      expect(shorthands.some(s => s.propName === 'val')).toBe(true);
+    });
   });
 });

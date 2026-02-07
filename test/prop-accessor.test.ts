@@ -64,6 +64,21 @@ describe('Scanner.findPropertyAccessors', () => {
     });
   });
 
+  describe('@(prop) NOT detected outside value position', () => {
+    test('@(prop) in selector position is not detected', () => {
+      const scanner = new Scanner('');
+      // @(prop) before colon - not in value position
+      const result = scanner.findPropertyAccessors('@(selector) { color: red; }');
+      expect(result).toHaveLength(0);
+    });
+
+    test('@(prop) at start of CSS (before any :) is not detected', () => {
+      const scanner = new Scanner('');
+      const result = scanner.findPropertyAccessors('@(test) .box { color: red; }');
+      expect(result).toHaveLength(0);
+    });
+  });
+
   describe('CSS at-rules are not confused with @(prop)', () => {
     // With @(prop) syntax, there's no ambiguity with CSS at-rules
     // These tests verify CSS at-rules pass through unchanged and don't trigger detection
@@ -410,6 +425,20 @@ describe('resolvePropertyAccessors', () => {
       const output = await executeTranspiledCode(code);
       // @(color) inside {{ }} resolves to "blue" (quoted), then {{ }} evaluates to blue
       expect(output).toContain('background: blue');
+    });
+
+    test('@(prop) at root level after {{ }} expression', async () => {
+      // Tests slice position calculation when }} closes at root level
+      // The @(color) appears after {{ }} in the CSS zone, no selector block
+      const input = `---
+color: blue;
+{{ 'injected' }}
+border: @(color);
+`;
+      const { code } = transpile(input);
+      const output = await executeTranspiledCode(code);
+      expect(output).toContain('border: blue');
+      expect(output).toContain('injected');
     });
   });
 });

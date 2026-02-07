@@ -89,6 +89,18 @@ describe('translateStyleBlocks()', () => {
       const result = translateStyleBlocks('const s = "test"; @{ color: red; }');
       expect(result.text).toBe('const s = "test"; ` color: red; `');
     });
+
+    it('should handle block comment inside style block content', () => {
+      // Block comment inside @{ } - findStyleBlockClose needs to handle /* */
+      const result = translateStyleBlocks('@{ /* comment */ color: red; }');
+      expect(result.text).toBe('` /* comment */ color: red; `');
+    });
+
+    it('should handle string with escape inside style block', () => {
+      // Escaped quote inside string inside @{ }
+      const result = translateStyleBlocks('@{ content: "test\\"value"; }');
+      expect(result.text).toBe('` content: "test\\"value"; `');
+    });
   });
 
   describe('nested style blocks', () => {
@@ -129,6 +141,13 @@ describe('translateStyleBlocks()', () => {
       const result = translateStyleBlocks('@{   ');
       // No closing } found, preserved as literal
       expect(result.text).toBe('@{   ');
+    });
+
+    it('should handle unclosed {{ inside style block', () => {
+      // {{ without }} inside @{ } - the {{ is preserved as literal
+      const result = translateStyleBlocks('@{ before {{ after }');
+      // The @{ } translates, but {{ without }} stays as literal text
+      expect(result.text).toBe('` before {{ after `');
     });
   });
 

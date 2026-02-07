@@ -142,6 +142,14 @@ describe('scope-tracker', () => {
         expect(getParents(result.slices)).toEqual([null, 0, null]);
       });
 
+      it('should handle }} at root level (unbalanced)', () => {
+        // }} without matching {{ - parentStack is empty
+        const result = cutByBraces('text }}');
+        expect(getContents(result.slices)).toEqual(['text ', '']);
+        expect(getParents(result.slices)).toEqual([null, null]);
+        expect(result.minDepth).toBe(-1);
+      });
+
       it('should handle nested {{ }} inside CSS blocks', () => {
         const result = cutByBraces('.box { margin: {{ a }}px {{ b }}px; }');
         expect(getContents(result.slices)).toEqual(['.box ', ' margin: ', ' a ', 'px ', ' b ', 'px; ', '']);
@@ -153,6 +161,31 @@ describe('scope-tracker', () => {
         const result = cutByBraces('.a { color: {{ x }}; } .b { }');
         expect(getContents(result.slices)).toEqual(['.a ', ' color: ', ' x ', '; ', ' .b ', ' ', '']);
         expect(getTypes(result.slices)).toEqual(['css', 'css', 'js', 'css', 'css', 'css', 'css']);
+      });
+    });
+
+    describe('@{ } style blocks - Story 5.1', () => {
+      it('should handle @{ } at top level', () => {
+        // @{ at root creates CSS context
+        const result = cutByBraces('@{ color: red; }');
+        expect(getContents(result.slices)).toEqual(['', ' color: red; ', '']);
+        expect(getTypes(result.slices)).toEqual(['css', 'css', 'css']);
+        expect(getParents(result.slices)).toEqual([null, 0, null]);
+        expect(result.slices[1]!.openedBy).toBe('@{');
+      });
+
+      it('should handle @{ } inside {{ }}', () => {
+        const result = cutByBraces('{{ @{ inner } }}');
+        expect(getContents(result.slices)).toEqual(['', ' ', ' inner ', ' ', '']);
+        expect(getTypes(result.slices)).toEqual(['css', 'js', 'css', 'js', 'css']);
+        expect(result.slices[2]!.openedBy).toBe('@{');
+      });
+
+      it('should track openedBy for all brace types', () => {
+        const result = cutByBraces('.box { {{ @{ x } }} }');
+        expect(result.slices[1]!.openedBy).toBe('{');
+        expect(result.slices[2]!.openedBy).toBe('{{');
+        expect(result.slices[3]!.openedBy).toBe('@{');
       });
     });
   });
@@ -228,6 +261,22 @@ describe('scope-tracker', () => {
         const { slices } = cutByBraces('.box { background: @background; }');
         // Position 0 means search empty string (nothing before @background)
         const value = findPropertyValue('background', slices, 1, 1);
+        expect(value).toBe('');
+      });
+
+      it('should skip values containing unresolved @(...) references', () => {
+        // When a property value itself contains @(prop), it's not fully resolved
+        // and should be skipped - returns empty since no earlier resolved value exists
+        const { slices } = cutByBraces('.box { border: @(color); outline: @(border); }');
+        // Looking for 'border' - value is '@(color)' which is unresolved, returns empty
+        const value = findPropertyValue('border', slices, 1);
+        expect(value).toBe('');
+      });
+
+      it('should return empty when only value has unresolved reference', () => {
+        // When the only matching property has an unresolved @(ref), return empty
+        const { slices } = cutByBraces('.box { color: @(other); outline: @(color); }');
+        const value = findPropertyValue('color', slices, 1);
         expect(value).toBe('');
       });
     });

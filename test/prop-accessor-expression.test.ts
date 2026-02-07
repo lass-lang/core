@@ -243,5 +243,19 @@ line2";
       const accessors = Scanner.findPropertyAccessorsStatic(cssZone);
       expect(accessors).toHaveLength(2);
     });
+
+    test('@(prop) after {{ }} closes in same CSS block', async () => {
+      // Tests that slice position calculation handles }} closing correctly
+      // The @(color) is in CSS context AFTER the {{ }} expression
+      const input = `---
+.box {
+  color: blue;
+  margin: {{ 10 }}px;
+  border-color: @(color);
+}`;
+      const { code } = transpile(input);
+      const output = await executeTranspiledCode(code);
+      expect(output).toContain('border-color: blue');
+    });
   });
 });
