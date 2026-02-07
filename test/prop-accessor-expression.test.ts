@@ -190,6 +190,34 @@ describe('Story 3.3: @prop inside {{ }} expressions', () => {
       const output = await executeTranspiledCode(code);
       expect(output).toContain('margin: 20px');
     });
+
+    test('value with newline is properly escaped', async () => {
+      const input = `---
+.box {
+  content: "line1
+line2";
+  other: {{ @content }};
+}`;
+      const { code } = transpile(input);
+      const output = await executeTranspiledCode(code);
+      // The value should be escaped and work without breaking JS
+      expect(output).toContain('other: "line1\nline2"');
+    });
+
+    test('multiple special characters are properly escaped', async () => {
+      // Test backslash and quote together
+      const input = `---
+.box {
+  content: "path\\\\to\\"file\\"";
+  other: {{ @content }};
+}`;
+      const { code } = transpile(input);
+      const output = await executeTranspiledCode(code);
+      // The value should be preserved correctly through escaping
+      // Input CSS has: "path\\to\"file\"" (escaped in CSS)
+      // Output should have the same escaped value
+      expect(output).toContain('other: "path\\\\to\\"file\\""');
+    });
   });
 
   describe('scanner detection', () => {

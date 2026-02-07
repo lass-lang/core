@@ -135,11 +135,17 @@ function detectZones(source: string, options: TranspileOptions): DetectedZones {
  * Escapes a value for embedding in a JavaScript string literal.
  * Story 3.3: Used when @prop is inside {{ }} context.
  *
+ * Escapes: backslash, double quote, newline, carriage return
+ *
  * @param value - The value to escape
  * @returns Escaped value safe for JS string embedding
  */
 function escapeForJs(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
 }
 
 /**
@@ -314,6 +320,7 @@ function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string 
  * - Story 2.4: Array auto-join - wraps expressions in __lassExpr() for array/null handling
  * - Story 2.5: Universal {{ }} - processed everywhere in CSS zone (strings, url(), comments)
  * - Story 3.2: @prop resolution - resolves @prop to previously-declared CSS values (Phase 1)
+ * - Story 3.3: @prop in {{ }} - detects @prop inside expressions, quotes values for JS context
  *
  * @param source - The Lass source code
  * @param options - Transpilation options
