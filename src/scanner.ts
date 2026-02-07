@@ -398,6 +398,12 @@ export class Scanner {
    * Static version of findPropertyAccessors for use without Scanner instantiation.
    * Used internally by transpiler to avoid creating unnecessary Scanner instances.
    *
+   * Story 3.3: Handles @prop inside {{ }} expressions.
+   * - {{ doesn't reset inValuePosition (JS expression can contain @prop)
+   * - }} doesn't reset inValuePosition (exiting expression, still in value)
+   * - Single { resets inValuePosition (entering CSS block)
+   * - @prop inside {{ }} is detected and will be quoted during resolution
+   *
    * @param cssZone - The CSS zone content to scan
    * @returns Array of PropertyAccessor objects with propName and indices
    */
@@ -414,10 +420,13 @@ export class Scanner {
 
     // Track if we're in value position (after :)
     let inValuePosition = false;
+    // Track expression depth for {{ }} (Story 3.3)
+    let expressionDepth = 0;
     let i = 0;
 
     while (i < cssZone.length) {
       const char = cssZone[i];
+      const nextChar = cssZone[i + 1];
 
       // Track colon for value position
       if (char === ':') {
@@ -426,15 +435,38 @@ export class Scanner {
         continue;
       }
 
-      // Reset on semicolon or closing brace (end of declaration)
-      if (char === ';' || char === '}') {
+      // Handle {{ - entering JS expression (Story 3.3)
+      // DON'T reset inValuePosition - we can have @prop inside expressions
+      if (char === '{' && nextChar === '{') {
+        expressionDepth++;
+        i += 2;
+        continue;
+      }
+
+      // Handle }} - exiting JS expression (Story 3.3)
+      // DON'T reset inValuePosition - we're still in the CSS value after expression
+      if (char === '}' && nextChar === '}') {
+        expressionDepth--;
+        i += 2;
+        continue;
+      }
+
+      // Reset on semicolon (end of declaration) - but only if not inside expression
+      if (char === ';' && expressionDepth === 0) {
         inValuePosition = false;
         i++;
         continue;
       }
 
-      // Reset on opening brace (entering a new block)
-      if (char === '{') {
+      // Reset on single closing brace (end of block) - but only if not inside expression
+      if (char === '}' && expressionDepth === 0) {
+        inValuePosition = false;
+        i++;
+        continue;
+      }
+
+      // Reset on single opening brace (entering a new CSS block) - but only if not inside expression
+      if (char === '{' && expressionDepth === 0) {
         inValuePosition = false;
         i++;
         continue;
@@ -455,7 +487,8 @@ export class Scanner {
             continue;
           }
 
-          // Only detect if we're in value position (after :)
+          // Detect if we're in value position (after :)
+          // Story 3.3: This now works inside {{ }} because we don't reset inValuePosition there
           if (inValuePosition) {
             accessors.push({
               propName,

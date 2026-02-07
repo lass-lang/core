@@ -73,12 +73,13 @@ export {
   type FileLocation,
 } from './errors.js';
 
-// Re-export scope tracker types and functions for consumers (Story 3.1)
+// Re-export scope tracker types and functions for consumers (Story 3.1, 3.3)
 export {
   cutByBraces,
   findPropertyValue,
   areSiblingTrees,
   isInsideAtRule,
+  type ScopeSlice,
   type ScopeSlices,
 } from './scope-tracker.js';
 
@@ -131,15 +132,28 @@ function detectZones(source: string, options: TranspileOptions): DetectedZones {
 }
 
 /**
+ * Escapes a value for embedding in a JavaScript string literal.
+ * Story 3.3: Used when @prop is inside {{ }} context.
+ *
+ * @param value - The value to escape
+ * @returns Escaped value safe for JS string embedding
+ */
+function escapeForJs(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
  * Step 2: Resolve @prop accessors in CSS zone.
  *
  * Story 3.2: Basic Property Lookup
+ * Story 3.3: Lookup in {{ }} Context
  *
  * Finds @prop patterns in CSS value position and resolves them to their
- * previously-declared values using scope tracking utilities from Story 3.1.
+ * previously-declared values using scope tracking utilities.
  *
  * Resolution rules:
- * - Property found -> Replace @prop with resolved value
+ * - Property found in CSS context -> Replace @prop with resolved value
+ * - Property found in JS context (inside {{ }}) -> Replace with quoted value
  * - Property not found -> Preserve @prop unchanged (PostCSS/future CSS compatibility)
  *
  * This is Phase 1 of transpilation and runs BEFORE {{ }} processing.
@@ -161,18 +175,28 @@ function resolvePropertyAccessors(cssZone: string, _options: TranspileOptions): 
   }
 
   // Get scope slices for property lookup
-  const { slices, depths } = cutByBraces(cssZone);
+  const { slices } = cutByBraces(cssZone);
 
   // Build a map of character positions to slice indices
   // cutByBraces splits at { and }, so we need to track where each slice starts
+  // Account for {{ (2 chars) vs { (1 char) by reconstructing from slice content and types
   const sliceStartPositions: number[] = [];
   let pos = 0;
   for (let s = 0; s < slices.length; s++) {
     sliceStartPositions.push(pos);
-    pos += slices[s]!.length;
-    // Add 1 for the brace character between slices (except after last)
+    pos += slices[s]!.content.length;
+    // Add brace characters between slices (except after last)
     if (s < slices.length - 1) {
-      pos += 1; // { or }
+      // Look at the NEXT slice to determine what brace opened it
+      const nextSlice = slices[s + 1]!;
+      // If next slice is JS type, we crossed {{ (2 chars)
+      // If current slice is JS type and next is CSS, we crossed }} (2 chars)
+      // Otherwise single brace (1 char)
+      if (nextSlice.type === 'js' || (slices[s]!.type === 'js' && nextSlice.type === 'css')) {
+        pos += 2; // {{ or }}
+      } else {
+        pos += 1; // { or }
+      }
     }
   }
 
@@ -197,12 +221,17 @@ function resolvePropertyAccessors(cssZone: string, _options: TranspileOptions): 
     const positionInSlice = startIndex - sliceStartPositions[sliceIndex]!;
 
     // Look up the property value
-    const value = findPropertyValue(propName, slices, depths, sliceIndex, positionInSlice);
+    const value = findPropertyValue(propName, slices, sliceIndex, positionInSlice);
 
     // Only replace if we found a value (non-empty string)
     // If not found, preserve the original @prop (PostCSS/future CSS compatibility)
     if (value !== '') {
-      result = result.slice(0, startIndex) + value + result.slice(endIndex);
+      // Story 3.3: If @prop is inside a JS-type slice, quote the value
+      const slice = slices[sliceIndex]!;
+      const replacement = slice.type === 'js' 
+        ? `"${escapeForJs(value)}"` 
+        : value;
+      result = result.slice(0, startIndex) + replacement + result.slice(endIndex);
     }
   }
 

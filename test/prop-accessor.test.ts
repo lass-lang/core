@@ -358,21 +358,17 @@ describe('resolvePropertyAccessors', () => {
       expect(output).toContain('background: green');
     });
 
-    test('@prop inside {{ }} is Story 3.3 scope - preserved for now', async () => {
-      // Story 3.2 does NOT handle @prop inside {{ }}
-      // That's Story 3.3: "Lookup in {{ }} Context"
-      // For now, @prop inside {{ }} should cause a JS error or be preserved
+    test('@prop inside {{ }} now works (Story 3.3)', async () => {
+      // Story 3.3: @prop inside {{ }} is detected, resolved, and quoted
       const input = `---
 .box {
   color: blue;
   background: {{ @color }};
 }`;
-      // This should NOT work in Story 3.2 - the @color inside {{ }} is not resolved
-      // and will cause a JS runtime error (@ is invalid JS)
-      await expect(async () => {
-        const { code } = transpile(input);
-        await executeTranspiledCode(code);
-      }).rejects.toThrow();
+      const { code } = transpile(input);
+      const output = await executeTranspiledCode(code);
+      // @color inside {{ }} resolves to "blue" (quoted), then {{ }} evaluates to blue
+      expect(output).toContain('background: blue');
     });
   });
 });

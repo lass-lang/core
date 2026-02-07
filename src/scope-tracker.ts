@@ -2,23 +2,40 @@
  * Scope tracking utilities for CSS property accumulation.
  *
  * Story 3.1: CSS Accumulator in Transpiler
+ * Story 3.3: Lookup in {{ }} Context
  *
  * This module provides utilities for:
  * 1. Cutting CSS into slices at brace boundaries
- * 2. Looking up property values with backward search through scopes
+ * 2. Looking up property values by walking parent chain
  *
  * The approach uses string slices and lazy regex lookup (not Maps).
  * This is compile-time resolution - values are resolved during transpilation.
+ *
+ * Story 3.3 additions:
+ * - Each slice tracks its type ('css' or 'js') based on brace type
+ * - Each slice has a parent reference for easy scope walking
+ * - findPropertyValue() skips JS-type slices during lookup
  */
+
+/**
+ * A single scope slice with metadata.
+ * Story 3.3: Added type and parent for scope tracking.
+ */
+export interface ScopeSlice {
+  /** The text content of this slice */
+  content: string;
+  /** Type of scope: 'css' for { }, 'js' for {{ }} */
+  type: 'css' | 'js';
+  /** Index of parent slice, or null for root-level slices */
+  parent: number | null;
+}
 
 /**
  * Result of cutting CSS by braces.
  */
 export interface ScopeSlices {
-  /** Array of string slices between brace boundaries ({ } or {{ }}) */
-  slices: string[];
-  /** Depth at which each slice exists (0 = top level, negative = unbalanced closing braces) */
-  depths: number[];
+  /** Array of slice objects with content, type, and parent reference */
+  slices: ScopeSlice[];
   /** Minimum depth reached (negative indicates unbalanced closing braces) */
   minDepth: number;
   /** Maximum depth reached */
@@ -31,31 +48,50 @@ export interface ScopeSlices {
  * Handles both single braces ({ }) for CSS blocks and double braces
  * ({{ }}) for JS expressions. Each brace pair increases/decreases depth by 1.
  *
+ * Story 3.3: Each slice now includes:
+ * - type: 'css' for content inside { }, 'js' for content inside {{ }}
+ * - parent: index of the parent slice for scope walking
+ *
  * Example with CSS nesting:
  * ```
  * Input: ".parent { color: blue; .child { border: 1px; } }"
- * Slices: [".parent ", " color: blue; .child ", " border: 1px; ", " "]
- * Depths: [0, 1, 2, 1]
+ * Slices: [
+ *   { content: ".parent ", type: 'css', parent: null },
+ *   { content: " color: blue; .child ", type: 'css', parent: 0 },
+ *   { content: " border: 1px; ", type: 'css', parent: 1 },
+ *   { content: " ", type: 'css', parent: 0 },
+ *   { content: "", type: 'css', parent: null }
+ * ]
  * ```
  *
  * Example with JS expression:
  * ```
  * Input: ".box { color: {{ expr }}; }"
- * Slices: [".box ", " color: ", " expr ", "; ", ""]
- * Depths: [0, 1, 2, 1, 0]
+ * Slices: [
+ *   { content: ".box ", type: 'css', parent: null },
+ *   { content: " color: ", type: 'css', parent: 0 },
+ *   { content: " expr ", type: 'js', parent: 1 },
+ *   { content: "; ", type: 'css', parent: 0 },
+ *   { content: "", type: 'css', parent: null }
+ * ]
  * ```
  *
  * @param cssZone - The CSS text to split
- * @returns Object with slices array and depths array
+ * @returns Object with slices array, minDepth, and maxDepth
  */
 export function cutByBraces(cssZone: string): ScopeSlices {
   if (!cssZone) {
-    return { slices: [''], depths: [0], minDepth: 0, maxDepth: 0 };
+    return { 
+      slices: [{ content: '', type: 'css', parent: null }], 
+      minDepth: 0, 
+      maxDepth: 0 
+    };
   }
 
-  const slices: string[] = [];
-  const depths: number[] = [];
+  const slices: ScopeSlice[] = [];
+  const parentStack: number[] = [];  // Stack of parent slice indices
   let currentSlice = '';
+  let currentType: 'css' | 'js' = 'css';
   let depth = 0;
   let minDepth = 0;
   let maxDepth = 0;
@@ -66,39 +102,51 @@ export function cutByBraces(cssZone: string): ScopeSlices {
 
     // Check for {{ (double opening brace - JS expression)
     if (char === '{' && nextChar === '{') {
-      // End current slice before the braces
-      slices.push(currentSlice);
-      depths.push(depth);
+      // Push current slice with current parent
+      const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
+      slices.push({ content: currentSlice, type: currentType, parent });
+      // The slice we just pushed becomes the parent for nested content
+      parentStack.push(slices.length - 1);
       currentSlice = '';
+      currentType = 'js';  // Entering JS expression
       depth++;
       maxDepth = Math.max(maxDepth, depth);
-      i++; // Skip the second {
+      i++;  // Skip the second {
     }
     // Check for }} (double closing brace - JS expression)
     else if (char === '}' && nextChar === '}') {
-      // End current slice before the braces
-      slices.push(currentSlice);
-      depths.push(depth);
+      // Push current slice with current parent
+      const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
+      slices.push({ content: currentSlice, type: currentType, parent });
+      // Pop parent since we're exiting this scope
+      parentStack.pop();
       currentSlice = '';
+      currentType = 'css';  // Exiting JS returns to CSS
       depth--;
       minDepth = Math.min(minDepth, depth);
-      i++; // Skip the second }
+      i++;  // Skip the second }
     }
     // Single { (CSS block)
     else if (char === '{') {
-      // End current slice before the brace
-      slices.push(currentSlice);
-      depths.push(depth);
+      // Push current slice with current parent
+      const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
+      slices.push({ content: currentSlice, type: currentType, parent });
+      // The slice we just pushed becomes the parent for nested content
+      parentStack.push(slices.length - 1);
       currentSlice = '';
+      currentType = 'css';  // CSS block is CSS context
       depth++;
       maxDepth = Math.max(maxDepth, depth);
     }
     // Single } (CSS block)
     else if (char === '}') {
-      // End current slice before the brace
-      slices.push(currentSlice);
-      depths.push(depth);
+      // Push current slice with current parent
+      const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
+      slices.push({ content: currentSlice, type: currentType, parent });
+      // Pop parent since we're exiting this scope
+      parentStack.pop();
       currentSlice = '';
+      currentType = 'css';  // Exiting always returns to CSS
       depth--;
       minDepth = Math.min(minDepth, depth);
     } else {
@@ -107,32 +155,33 @@ export function cutByBraces(cssZone: string): ScopeSlices {
   }
 
   // Always add trailing content (even if empty) to maintain consistent structure
-  slices.push(currentSlice);
-  depths.push(depth);
+  const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
+  slices.push({ content: currentSlice, type: currentType, parent });
 
-  return { slices, depths, minDepth, maxDepth };
+  return { slices, minDepth, maxDepth };
 }
 
 /**
- * Finds the value of a CSS property by searching backward through slices.
+ * Finds the value of a CSS property by searching the scope tree.
  *
- * Search algorithm:
- * 1. Start at the current slice (up to the position before @prop)
- * 2. Search for `propName:` pattern (NOT `@propName:`)
- * 3. If not found, walk backward to parent slices
- * 4. Stop at scope boundaries (when depth decreases past starting point)
+ * Story 3.3: Algorithm using parent references:
+ * 1. Search current slice (up to the position before @prop)
+ * 2. Search earlier sibling slices (same parent, earlier index)
+ * 3. Walk up to parent and repeat
+ * 4. Stop when we reach a root slice (parent: null) and exhaust all earlier siblings
+ *
+ * JS-type slices ({{ }}) are skipped during search since they contain
+ * JS code, not CSS property declarations.
  *
  * @param propName - The property name to look up (e.g., "border")
  * @param slices - The slices from cutByBraces()
- * @param depths - The depth array from cutByBraces()
  * @param currentIndex - Index of the slice containing the @prop reference
  * @param positionInSlice - Character position in current slice (for self-reference protection)
  * @returns The property value, or empty string if not found
  */
 export function findPropertyValue(
   propName: string,
-  slices: string[],
-  depths: number[],
+  slices: ScopeSlice[],
   currentIndex: number,
   positionInSlice: number = -1
 ): string {
@@ -152,52 +201,58 @@ export function findPropertyValue(
     'gi'
   );
 
-  const startDepth = depths[currentIndex]!;
-
-  // Search current slice first (only content before positionInSlice)
+  // Search current slice first (with position limit for self-reference protection)
   const currentSlice = slices[currentIndex]!;
-  const searchContent =
-    positionInSlice >= 0 ? currentSlice.slice(0, positionInSlice) : currentSlice;
-
-  const currentMatch = findLastMatch(searchContent, pattern);
-  if (currentMatch) {
-    return currentMatch.trim();
-  }
-
-  // Walk backward through ancestor slices
-  //
-  // Simple rules:
-  // 1. SKIP slices with depth > startDepth (nested blocks like {{ }} - not ancestors)
-  // 2. SEARCH slices with depth <= startDepth (same level or parent scopes)
-  // 3. STOP after searching depth 0 (reached root of our selector tree)
-  //
-  // Example: .test { color: blue; {{ expr }} outline: @color; }
-  //   depths: [0, 1, 2, 1, 0], at slice 3 (depth 1)
-  //   i=2: depth 2 > 1 → skip
-  //   i=1: depth 1 <= 1 → search → find "color: blue" ✓
-  //
-  // Example: .a { } .b { @color }
-  //   depths: [0, 1, 0, 1, 0], at slice 3 (depth 1)
-  //   i=2: depth 0 <= 1 → search (no match), depth 0 → stop
-  //   Correctly doesn't see .a's properties (sibling tree)
-  
-  for (let i = currentIndex - 1; i >= 0; i--) {
-    const sliceDepth = depths[i]!;
-    
-    // Skip nested blocks (depth higher than where we started)
-    if (sliceDepth > startDepth) {
-      continue;
-    }
-
-    // Search this ancestor slice
-    const match = findLastMatch(slices[i]!, pattern);
+  if (currentSlice.type === 'css') {
+    const searchContent = positionInSlice >= 0 
+      ? currentSlice.content.slice(0, positionInSlice) 
+      : currentSlice.content;
+    const match = findLastMatch(searchContent, pattern);
     if (match) {
       return match.trim();
     }
+  }
+
+  // Now search backwards through all earlier slices
+  // We search slices with the same parent first (siblings), then walk up
+  // The key insight: walk backward through slices, but only search those
+  // that are in our ancestry chain (share a common parent path)
+  
+  // Build the set of all ancestor indices (the parent chain from current slice)
+  const ancestorIndices = new Set<number>();
+  let parentIndex: number | null = currentSlice.parent;
+  while (parentIndex !== null) {
+    ancestorIndices.add(parentIndex);
+    parentIndex = slices[parentIndex]!.parent;
+  }
+
+  // Walk backward through slices, searching those that share our ancestry
+  for (let i = currentIndex - 1; i >= 0; i--) {
+    const slice = slices[i]!;
     
-    // Stop after searching at depth 0 (root of our tree)
-    if (sliceDepth === 0) {
-      break;
+    // Skip JS-type slices
+    if (slice.type === 'js') {
+      continue;
+    }
+
+    // Check if this slice is in our ancestor chain or shares a parent with one of them
+    // A slice is reachable if:
+    // 1. It's one of our ancestors (in ancestorIndices)
+    // 2. Its parent is one of our ancestors (it's a sibling of an ancestor)
+    const isAncestor = ancestorIndices.has(i);
+    const isReachableSibling = slice.parent !== null && ancestorIndices.has(slice.parent);
+    
+    // Also include slices whose parent is the same as current slice's parent (direct siblings)
+    const isDirectSibling = slice.parent === currentSlice.parent;
+    
+    if (!isAncestor && !isReachableSibling && !isDirectSibling) {
+      continue;
+    }
+
+    // Search this slice
+    const match = findLastMatch(slice.content, pattern);
+    if (match) {
+      return match.trim();
     }
   }
 
@@ -228,33 +283,38 @@ function findLastMatch(text: string, pattern: RegExp): string | null {
  *
  * Sibling trees are isolated - properties from one top-level rule
  * cannot be accessed from another. Two slices are siblings when
- * there's a depth-0 slice between them (indicating separate top-level rules).
+ * they don't share a common ancestor (neither is in the other's parent chain).
  *
- * Note: findPropertyValue() uses a simpler O(1) approach internally
- * (tracking minDepthSeen), but this function is useful for external
- * consumers who need to check sibling relationships between arbitrary slices.
+ * Story 3.3: Uses parent references for simpler implementation.
  *
  * @param sliceIndexA - Index of first slice
  * @param sliceIndexB - Index of second slice
- * @param depths - The depth array from cutByBraces()
+ * @param slices - The slices from cutByBraces()
  * @returns true if slices are in DIFFERENT sibling trees (isolated from each other)
  */
 export function areSiblingTrees(
   sliceIndexA: number,
   sliceIndexB: number,
-  depths: number[]
+  slices: ScopeSlice[]
 ): boolean {
-  const minIndex = Math.min(sliceIndexA, sliceIndexB);
-  const maxIndex = Math.max(sliceIndexA, sliceIndexB);
-
-  // Check if there's a depth-0 boundary between them
-  for (let i = minIndex + 1; i < maxIndex; i++) {
-    if (depths[i] === 0) {
-      return true;
-    }
+  // Build set of all ancestors of slice A (including A itself)
+  const ancestorsA = new Set<number>();
+  let index: number | null = sliceIndexA;
+  while (index !== null) {
+    ancestorsA.add(index);
+    index = slices[index]!.parent;
   }
 
-  return false;
+  // Check if slice B or any of its ancestors is in A's ancestor set
+  index = sliceIndexB;
+  while (index !== null) {
+    if (ancestorsA.has(index)) {
+      return false;  // Found common ancestor - not siblings
+    }
+    index = slices[index]!.parent;
+  }
+
+  return true;  // No common ancestor - they are siblings
 }
 
 /**
@@ -263,42 +323,28 @@ export function areSiblingTrees(
  * At-rule boundaries create separate scopes - properties from outside
  * cannot be accessed from inside (in v0).
  *
- * @param slices - The slices array
- * @param depths - The depth array from cutByBraces()
+ * Story 3.3: Uses parent references for simpler implementation.
+ * Walks up the parent chain checking if any ancestor contains an at-rule.
+ *
+ * @param slices - The slices from cutByBraces()
  * @param sliceIndex - Index of the slice to check
  * @returns true if the slice is inside an at-rule
  */
 export function isInsideAtRule(
-  slices: string[],
-  depths: number[],
+  slices: ScopeSlice[],
   sliceIndex: number
 ): boolean {
-  const startDepth = depths[sliceIndex] ?? 0;
+  // Walk up parent chain looking for at-rule patterns
+  let index: number | null = slices[sliceIndex]?.parent ?? null;
   
-  // We need to find the "opening" slice for our current depth level
-  // Walk backward to find what opened the block we're in
-  let currentCheckDepth = startDepth;
-  
-  for (let i = sliceIndex - 1; i >= 0; i--) {
-    const sliceDepth = depths[i] ?? 0;
-    
-    // Found a slice at shallower depth - this is what opened our block
-    if (sliceDepth < currentCheckDepth) {
-      const slice = slices[i]!;
-      // Check if this opener is an at-rule
-      if (/@(?:media|layer|supports|container|keyframes|font-face)\b/i.test(slice)) {
-        return true;
-      }
-      // Move up to check parent blocks
-      currentCheckDepth = sliceDepth;
-      
-      // If we've reached depth 0 and it's not an at-rule, we're outside any at-rule
-      if (sliceDepth === 0) {
-        return false;
-      }
+  while (index !== null) {
+    const slice = slices[index]!;
+    // Check if this ancestor contains an at-rule
+    if (/@(?:media|layer|supports|container|keyframes|font-face)\b/i.test(slice.content)) {
+      return true;
     }
+    index = slice.parent;
   }
   
-  // If loop completes without finding an at-rule opener, we're not inside one
   return false;
 }
