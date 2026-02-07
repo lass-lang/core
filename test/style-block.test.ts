@@ -33,6 +33,12 @@ describe('translateStyleBlocks()', () => {
       const result = translateStyleBlocks('@{}');
       expect(result.text).toBe('``');
     });
+
+    it('should handle style block with only whitespace/newlines', () => {
+      // Multi-line block with only empty lines - tests minIndent === Infinity case
+      const result = translateStyleBlocks('@{\n\n\n}');
+      expect(result.text).toBe('``');
+    });
   });
 
   describe('$param translation', () => {
