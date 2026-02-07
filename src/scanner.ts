@@ -591,6 +591,9 @@ export class Scanner {
     // Note: url() is NOT protected - $param inside url() IS substituted
     const state = createContextState();
 
+    // Track {{ }} script block depth ($param not substituted inside)
+    let scriptBlockDepth = 0;
+
     let i = 0;
 
     while (i < cssZone.length) {
@@ -610,8 +613,21 @@ export class Scanner {
         continue;
       }
 
-      // Skip if in any protected context
-      if (isInProtectedContext(state)) {
+      // Track {{ }} script block depth (only when not in protected context)
+      if (!isInProtectedContext(state) && char === '{' && nextChar === '{') {
+        scriptBlockDepth++;
+        i += 2;
+        continue;
+      }
+
+      if (!isInProtectedContext(state) && char === '}' && nextChar === '}' && scriptBlockDepth > 0) {
+        scriptBlockDepth--;
+        i += 2;
+        continue;
+      }
+
+      // Skip if in any protected context OR inside {{ }}
+      if (isInProtectedContext(state) || scriptBlockDepth > 0) {
         i++;
         continue;
       }
