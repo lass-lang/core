@@ -71,6 +71,19 @@ export interface DollarVariable {
 }
 
 /**
+ * Information about a detected @prop shorthand.
+ * Story 4.2: Style Lookup Shorthand
+ */
+export interface StyleLookupShorthand {
+  /** The property name (without @ prefix) */
+  propName: string;
+  /** Start index of @propname in the CSS string */
+  startIndex: number;
+  /** End index (exclusive) of @propname in the CSS string */
+  endIndex: number;
+}
+
+/**
  * Scanner options for customizing scan behavior.
  */
 export interface ScanOptions {
@@ -666,5 +679,182 @@ export class Scanner {
    */
   private static isIdentifierChar(char: string): boolean {
     return /^[a-zA-Z0-9_$]$/.test(char);
+  }
+
+  /**
+   * Finds @prop shorthand accessors in CSS zone.
+   *
+   * Story 4.2: Style Lookup Shorthand
+   *
+   * Detection rules:
+   * - @prop in CSS value position (after :) is a Lass shorthand accessor
+   * - @prop shorthand only works when identifier starts with a letter [a-zA-Z]
+   * - Identifier continues with letters, digits, hyphens, underscores
+   * - NOT detected inside {{ }} script blocks (use explicit @(prop) there)
+   * - NOT detected inside protected contexts: strings, comments, url()
+   *
+   * Examples:
+   * - @border → shorthand for @(border)
+   * - @border-color → shorthand for @(border-color)
+   * - @--custom → NOT detected (starts with hyphen, use @(--custom))
+   * - @-webkit-foo → NOT detected (starts with hyphen, use @(-webkit-foo))
+   *
+   * @param cssZone - The CSS zone content to scan
+   * @returns Array of StyleLookupShorthand objects with propName and indices
+   */
+  findStyleLookupShorthands(cssZone: string): StyleLookupShorthand[] {
+    return Scanner.findStyleLookupShorthandsStatic(cssZone);
+  }
+
+  /**
+   * Static version of findStyleLookupShorthands for use without Scanner instantiation.
+   * Used internally by transpiler to avoid creating unnecessary Scanner instances.
+   *
+   * Story 4.2: Style Lookup Shorthand
+   *
+   * @param cssZone - The CSS zone content to scan
+   * @returns Array of StyleLookupShorthand objects with propName and indices
+   */
+  static findStyleLookupShorthandsStatic(cssZone: string): StyleLookupShorthand[] {
+    const shorthands: StyleLookupShorthand[] = [];
+
+    if (!cssZone) {
+      return shorthands;
+    }
+
+    // Context tracking for protected zones
+    // Note: url() is NOT a protected context - @prop inside url(@path) IS detected
+    // Only strings and comments are protected (same as $param behavior)
+    let inString = false;
+    let stringChar = '';
+    let inBlockComment = false;
+
+    // Track {{ }} script block depth (shorthand not allowed inside)
+    let scriptBlockDepth = 0;
+
+    // Track if we're in value position (after :)
+    let inValuePosition = false;
+
+    let i = 0;
+
+    while (i < cssZone.length) {
+      const char = cssZone[i]!;
+      const nextChar = cssZone[i + 1];
+
+      // Track block comment start: /*
+      if (!inString && !inBlockComment && char === '/' && nextChar === '*') {
+        inBlockComment = true;
+        i += 2;
+        continue;
+      }
+
+      // Track block comment end: */
+      if (inBlockComment && char === '*' && nextChar === '/') {
+        inBlockComment = false;
+        i += 2;
+        continue;
+      }
+
+      // Track string literals (only when not in comment)
+      if (!inBlockComment && (char === '"' || char === "'")) {
+        if (!inString) {
+          inString = true;
+          stringChar = char;
+        } else if (char === stringChar) {
+          // Check for escaped quote
+          let backslashCount = 0;
+          for (let j = i - 1; j >= 0 && cssZone[j] === '\\'; j--) {
+            backslashCount++;
+          }
+          if (backslashCount % 2 === 0) {
+            inString = false;
+          }
+        }
+        i++;
+        continue;
+      }
+
+      // Track {{ }} script block depth
+      if (!inString && !inBlockComment && char === '{' && nextChar === '{') {
+        scriptBlockDepth++;
+        i += 2;
+        continue;
+      }
+
+      if (!inString && !inBlockComment && char === '}' && nextChar === '}' && scriptBlockDepth > 0) {
+        scriptBlockDepth--;
+        i += 2;
+        continue;
+      }
+
+      // Skip if in any protected context OR inside {{ }}
+      if (inString || inBlockComment || scriptBlockDepth > 0) {
+        i++;
+        continue;
+      }
+
+      // Track colon for value position
+      if (char === ':') {
+        inValuePosition = true;
+        i++;
+        continue;
+      }
+
+      // Reset on semicolon (end of declaration)
+      if (char === ';') {
+        inValuePosition = false;
+        i++;
+        continue;
+      }
+
+      // Reset on single opening brace (entering a new CSS block)
+      if (char === '{') {
+        inValuePosition = false;
+        i++;
+        continue;
+      }
+
+      // Reset on single closing brace (end of block)
+      if (char === '}') {
+        inValuePosition = false;
+        i++;
+        continue;
+      }
+
+      // Check for @ followed by letter (shorthand only works when starting with letter)
+      if (char === '@' && nextChar !== undefined && /^[a-zA-Z]$/.test(nextChar)) {
+        // Only detect in value position
+        if (inValuePosition) {
+          const startIndex = i;
+          i++; // Move past @
+
+          // Consume CSS identifier characters (letters, digits, hyphens, underscores)
+          let propName = '';
+          while (i < cssZone.length && Scanner.isCssIdentifierChar(cssZone[i]!)) {
+            propName += cssZone[i];
+            i++;
+          }
+
+          shorthands.push({
+            propName,
+            startIndex,
+            endIndex: i,
+          });
+          continue;
+        }
+      }
+
+      i++;
+    }
+
+    return shorthands;
+  }
+
+  /**
+   * Checks if a character is a valid CSS identifier character.
+   * Valid: a-z, A-Z, 0-9, -, _
+   */
+  private static isCssIdentifierChar(char: string): boolean {
+    return /^[a-zA-Z0-9_-]$/.test(char);
   }
 }

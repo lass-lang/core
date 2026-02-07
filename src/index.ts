@@ -64,8 +64,9 @@ export { Scanner } from './scanner.js';
  * - ExpressionSplit: Result of {{ }} expression splitting
  * - PropertyAccessor: Info about detected @(prop) accessor (propName, indices)
  * - DollarVariable: Info about detected $param variable (varName, indices)
+ * - StyleLookupShorthand: Info about detected @prop shorthand (propName, indices)
  */
-export type { ScanResult, ScanOptions, ZoneSplit, ExpressionSplit, PropertyAccessor, DollarVariable } from './scanner.js';
+export type { ScanResult, ScanOptions, ZoneSplit, ExpressionSplit, PropertyAccessor, DollarVariable, StyleLookupShorthand } from './scanner.js';
 
 // Re-export error types for consumers
 export {
@@ -165,7 +166,48 @@ function escapeForJs(value: string): string {
 }
 
 /**
- * Step 2: Resolve @(prop) accessors in CSS zone.
+ * Step 2a: Normalize @prop shorthands to @(prop) form.
+ *
+ * Story 4.2: Style Lookup Shorthand
+ *
+ * Finds @prop patterns in CSS value position and converts them to @(prop).
+ * This runs BEFORE @(prop) resolution so all lookups are handled uniformly.
+ *
+ * Detection rules:
+ * - @prop shorthand only works when identifier starts with a letter [a-zA-Z]
+ * - NOT detected inside {{ }} script blocks
+ * - NOT detected inside protected contexts: strings, comments, url()
+ *
+ * @param cssZone - The CSS zone content
+ * @returns CSS zone with @prop normalized to @(prop)
+ */
+function normalizeStyleLookupShorthands(cssZone: string): string {
+  if (!cssZone) {
+    return cssZone;
+  }
+
+  const shorthands = Scanner.findStyleLookupShorthandsStatic(cssZone);
+
+  if (shorthands.length === 0) {
+    return cssZone;
+  }
+
+  // Process from end to start so indices remain valid
+  let result = cssZone;
+
+  for (let i = shorthands.length - 1; i >= 0; i--) {
+    const shorthand = shorthands[i]!;
+    const { propName, startIndex, endIndex } = shorthand;
+
+    // Replace @prop with @(prop)
+    result = result.slice(0, startIndex) + `@(${propName})` + result.slice(endIndex);
+  }
+
+  return result;
+}
+
+/**
+ * Step 2b: Resolve @(prop) accessors in CSS zone.
  *
  * Story 3.2: Basic Property Lookup
  * Story 3.3: Lookup in {{ }} Context
@@ -406,6 +448,7 @@ function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string 
  * - Story 3.3: @(prop) in {{ }} - detects @(prop) inside expressions, quotes values for JS context
  * - Refactored: Changed from @prop to @(prop) for unambiguous syntax (supports custom properties)
  * - Story 4.1: $param substitution - replaces $param with ${$param} for template literal interpolation
+ * - Story 4.2: @prop shorthand - normalizes @prop to @(prop) before resolution
  *
  * @param source - The Lass source code
  * @param options - Transpilation options
@@ -418,8 +461,11 @@ export function transpile(
   // Step 1: Split source into preamble and CSS zones
   const zones = detectZones(source, options);
 
-  // Step 2: Resolve @(prop) accessors (Phase 1 - before {{ }} processing)
-  const resolvedCssZone = resolvePropertyAccessors(zones.cssZone, options);
+  // Step 2a: Normalize @prop shorthands to @(prop) form
+  const normalizedCssZone = normalizeStyleLookupShorthands(zones.cssZone);
+
+  // Step 2b: Resolve @(prop) accessors (Phase 1 - before {{ }} processing)
+  const resolvedCssZone = resolvePropertyAccessors(normalizedCssZone, options);
 
   // Step 3: Replace $param with __lassScriptLookup() calls for variable substitution
   const dollarResult = resolveDollarVariables(resolvedCssZone, options);
