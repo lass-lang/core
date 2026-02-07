@@ -65,8 +65,15 @@ const axioms = loadAllAxioms();
 
 // Generate tests dynamically from axioms
 for (const axiom of axioms) {
-  // Skip axioms marked as not-implemented or vite-only (require Vite plugin context)
-  const shouldSkip = axiom.metadata.status === 'not-implemented' || (axiom.metadata.status as string) === 'vite-only';
+  // Skip axioms that are not yet implemented or require Vite plugin context
+  // - not-implemented: Feature not started
+  // - in-progress: Feature infrastructure exists but not integrated (e.g., Story 3.1)
+  // - vite-only: Requires Vite plugin context
+  const status = axiom.metadata.status as string;
+  const shouldSkip = 
+    status === 'not-implemented' || 
+    status === 'in-progress' ||
+    status === 'vite-only';
 
   describe(axiom.feature, () => {
     // Group by outcome

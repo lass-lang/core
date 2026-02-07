@@ -64,6 +64,15 @@ export {
   type FileLocation,
 } from './errors.js';
 
+// Re-export scope tracker types and functions for consumers (Story 3.1)
+export {
+  cutByBraces,
+  findPropertyValue,
+  areSiblingTrees,
+  isInsideAtRule,
+  type ScopeSlices,
+} from './scope-tracker.js';
+
 /**
  * Runtime helper function for expression output.
  * Story 2.4: Array auto-join and null/undefined handling.
