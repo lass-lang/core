@@ -266,6 +266,49 @@ export function resolveDollarVariables(cssZone: string, _options: TranspileOptio
 // ============================================================================
 
 /**
+ * Normalizes style block content by trimming and dedenting.
+ *
+ * Single-line (no newlines): Trim leading/trailing whitespace.
+ * Multi-line: 
+ *   - Dedent all lines by the minimum indentation found
+ *   - Trim leading and trailing whitespace
+ *
+ * @param content - Raw content from inside @{ }
+ * @returns Normalized content
+ */
+export function normalizeStyleBlockContent(content: string): string {
+  // Single-line: just trim
+  if (!content.includes('\n')) {
+    return content.trim();
+  }
+
+  const lines = content.split('\n');
+
+  // Find minimum indent of non-empty lines
+  let minIndent = Infinity;
+  for (const line of lines) {
+    if (line.trim() !== '') {
+      const leadingSpaces = line.match(/^[ \t]*/)?.[0].length ?? 0;
+      minIndent = Math.min(minIndent, leadingSpaces);
+    }
+  }
+  if (minIndent === Infinity) {
+    minIndent = 0;
+  }
+
+  // Dedent all lines
+  const dedented = lines.map(line => {
+    if (line.trim() === '') {
+      return ''; // Empty lines become empty
+    }
+    return line.slice(minIndent);
+  });
+
+  // Join and trim
+  return dedented.join('\n').trim();
+}
+
+/**
  * Result from style block translation.
  */
 export interface StyleBlockTranslationResult {
@@ -348,8 +391,11 @@ export function translateStyleBlocks(text: string): StyleBlockTranslationResult 
       // Extract content between @{ and }
       const content = text.slice(i + 2, closeIndex);
 
+      // Normalize whitespace: dedent and trim boundary empty lines
+      const normalizedContent = normalizeStyleBlockContent(content);
+
       // Recursively translate any nested @{ } inside
-      const nestedResult = translateStyleBlocks(content);
+      const nestedResult = translateStyleBlocks(normalizedContent);
       if (nestedResult.hasDollarVariables) {
         hasDollarVars = true;
       }
@@ -463,10 +509,42 @@ function findStyleBlockClose(text: string, startIndex: number): number {
 }
 
 /**
- * Translates {{ expr }} to ${__lassScriptExpression(expr)} inside style block content.
+ * Gets the leading whitespace (indent) at a given position by looking backwards to line start.
+ * 
+ * @param text - The full text
+ * @param pos - Position to find indent for
+ * @returns The whitespace string at the start of the line, or empty string if none
+ */
+function getIndentAtPosition(text: string, pos: number): string {
+  // Find the start of the line containing this position
+  let lineStart = pos;
+  while (lineStart > 0 && text[lineStart - 1] !== '\n') {
+    lineStart--;
+  }
+  
+  // Extract leading whitespace
+  let indent = '';
+  for (let i = lineStart; i < pos; i++) {
+    const char = text[i]!;
+    if (char === ' ' || char === '\t') {
+      indent += char;
+    } else {
+      // Non-whitespace found - this is the effective indent up to this point
+      break;
+    }
+  }
+  
+  return indent;
+}
+
+/**
+ * Translates {{ expr }} to ${__lassScriptExpression(expr, indent)} inside style block content.
  *
  * This is applied after @{ } is translated to backticks, so any {{ }} inside
  * becomes template literal interpolations with proper array/null handling.
+ * 
+ * Indent is calculated from the position of {{ within the style block content
+ * to enable proper multi-line re-indentation at runtime.
  *
  * @param text - Content inside a style block
  * @returns Text with {{ }} translated to ${__lassScriptExpression(...)}
@@ -497,7 +575,15 @@ function translateMustacheToInterpolation(text: string): string {
       if (j < text.length - 1 && text[j] === '}' && text[j + 1] === '}') {
         // Extract expression and wrap with helper
         const expr = text.slice(i + 2, j).trim();
-        result += '${__lassScriptExpression(' + expr + ')}';
+        
+        // Calculate indent at {{ position for multi-line re-indentation
+        const indent = getIndentAtPosition(text, i);
+        
+        if (indent) {
+          result += '${__lassScriptExpression(' + expr + ', "' + indent + '")}';
+        } else {
+          result += '${__lassScriptExpression(' + expr + ')}';
+        }
         i = j + 2;
         continue;
       }
@@ -604,7 +690,11 @@ export function translateStyleBlocksV2(text: string): StyleBlockTranslationResul
     let content = slice.content;
     
     // Translate $param in style block content (CSS context inside @{)
+    // Also normalize whitespace/indentation for style blocks
     if (slice.openedBy === '@{') {
+      // Normalize whitespace: dedent and trim boundary empty lines
+      content = normalizeStyleBlockContent(content);
+      
       const dollarResult = translateDollarVariablesInStyleBlock(content);
       content = dollarResult.text;
       if (dollarResult.hasDollarVariables) {
@@ -750,17 +840,35 @@ export function processExpressions(cssZone: string, hasDollarVariables: boolean,
 
   // Build template literal content with ${} interpolations
   let templateBody = '';
+  let exprIndex = 0;
   for (let i = 0; i < exprSplit.parts.length; i++) {
     if (i % 2 === 0) {
       // CSS chunk - escape for template literal
       templateBody += escapeForTemplateLiteral(exprSplit.parts[i]!);
     } else {
       // JS expression - translate @{ } style blocks, then wrap in helper
-      const styleBlockResult = translateStyleBlocksV2(exprSplit.parts[i]!);
+      // Use V1 (recursive) which properly normalizes entire style block content
+      const exprContent = exprSplit.parts[i]!;
+      const hasStyleBlock = exprContent.includes('@{');
+      const styleBlockResult = translateStyleBlocks(exprContent);
       if (styleBlockResult.hasDollarVariables) {
         styleBlockHasDollarVars = true;
       }
-      templateBody += '${__lassScriptExpression(' + styleBlockResult.text + ')}';
+      
+      // Only pass indent for expressions containing style blocks
+      // Plain JS expressions (like .join('\n...')) should not be re-indented
+      if (hasStyleBlock) {
+        const exprPos = exprSplit.expressionPositions[exprIndex]!;
+        const indent = getIndentAtPosition(cssZone, exprPos);
+        if (indent) {
+          templateBody += '${__lassScriptExpression(' + styleBlockResult.text + ', "' + indent + '")}';
+        } else {
+          templateBody += '${__lassScriptExpression(' + styleBlockResult.text + ')}';
+        }
+      } else {
+        templateBody += '${__lassScriptExpression(' + styleBlockResult.text + ')}';
+      }
+      exprIndex++;
     }
   }
 
@@ -786,10 +894,11 @@ export function processExpressions(cssZone: string, hasDollarVariables: boolean,
  */
 export function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string {
   // Translate @{ } style blocks in preamble (Story 5.1)
+  // Use V1 (recursive) which properly normalizes entire style block content
   let preambleHasDollarVars = false;
   let translatedPreamble = zones.preamble;
   if (zones.hasSeparator && zones.preamble.trim()) {
-    const preambleResult = translateStyleBlocksV2(zones.preamble);
+    const preambleResult = translateStyleBlocks(zones.preamble);
     translatedPreamble = preambleResult.text;
     preambleHasDollarVars = preambleResult.hasDollarVariables;
   }

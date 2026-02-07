@@ -8,14 +8,16 @@
 /**
  * Runtime helper function for {{ expression }} output.
  * Story 2.4: Array auto-join and null/undefined handling.
+ * Enhanced: Falsy suppression and multi-line re-indentation.
  *
- * - null/undefined -> '' (React-style silent handling)
- * - arrays -> recursively flattened then joined with empty string (enables .map() patterns)
- *   - Nested arrays like [[1,2], [3,4]] become '1234' (fully flattened)
- *   - null/undefined elements in arrays are converted to empty string
+ * - null/undefined/false -> '' (React-style silent handling)
+ * - arrays -> recursively flattened, filtered, stringified, then joined
+ *   - If any element contains newline, join with newline (multi-line blocks)
+ *   - Otherwise join with empty string (inline values)
  * - other values -> String coercion
+ * - Multi-line strings are re-indented using the optional indent parameter
  */
-export const LASS_SCRIPT_EXPRESSION_HELPER = `const __lassScriptExpression = v => v == null ? '' : Array.isArray(v) ? v.flat(Infinity).map(x => x == null ? '' : String(x)).join('') : String(v);`;
+export const LASS_SCRIPT_EXPRESSION_HELPER = `const __lassScriptExpression = (v, indent = '') => { if (v == null || v === false) return ''; if (Array.isArray(v)) { const a = v.flat(Infinity).map(x => (x == null || x === false) ? '' : String(x)).filter(x => x); const sep = a.some(x => x.includes('\\n')) ? '\\n' : ''; return a.join(sep); } const s = String(v); if (!indent || !s.includes('\\n')) return s; return s.split('\\n').map((l, i) => i === 0 ? l : indent + l).join('\\n'); };`;
 
 /**
  * Runtime helper function for $param variable substitution.

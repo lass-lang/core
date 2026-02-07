@@ -12,8 +12,9 @@ import { translateStyleBlocks } from '../src/transpiler.js';
 describe('translateStyleBlocks()', () => {
   describe('basic translation', () => {
     it('should translate @{ } to backticks', () => {
+      // Single-line style blocks are trimmed
       const result = translateStyleBlocks('@{ color: red; }');
-      expect(result.text).toBe('` color: red; `');
+      expect(result.text).toBe('`color: red;`');
     });
 
     it('should return unchanged text without @{', () => {
@@ -86,20 +87,23 @@ describe('translateStyleBlocks()', () => {
     });
 
     it('should handle @{ after exiting string context', () => {
+      // Single-line style blocks are trimmed
       const result = translateStyleBlocks('const s = "test"; @{ color: red; }');
-      expect(result.text).toBe('const s = "test"; ` color: red; `');
+      expect(result.text).toBe('const s = "test"; `color: red;`');
     });
 
     it('should handle block comment inside style block content', () => {
       // Block comment inside @{ } - findStyleBlockClose needs to handle /* */
+      // Single-line style blocks are trimmed
       const result = translateStyleBlocks('@{ /* comment */ color: red; }');
-      expect(result.text).toBe('` /* comment */ color: red; `');
+      expect(result.text).toBe('`/* comment */ color: red;`');
     });
 
     it('should handle string with escape inside style block', () => {
       // Escaped quote inside string inside @{ }
+      // Single-line style blocks are trimmed
       const result = translateStyleBlocks('@{ content: "test\\"value"; }');
-      expect(result.text).toBe('` content: "test\\"value"; `');
+      expect(result.text).toBe('`content: "test\\"value";`');
     });
   });
 
@@ -145,21 +149,24 @@ describe('translateStyleBlocks()', () => {
 
     it('should handle unclosed {{ inside style block', () => {
       // {{ without }} inside @{ } - the {{ is preserved as literal
+      // Single-line style blocks are trimmed
       const result = translateStyleBlocks('@{ before {{ after }');
       // The @{ } translates, but {{ without }} stays as literal text
-      expect(result.text).toBe('` before {{ after `');
+      expect(result.text).toBe('`before {{ after`');
     });
   });
 
   describe('arrow functions with style blocks', () => {
     it('should translate arrow function returning style block', () => {
+      // Single-line style blocks are trimmed
       const result = translateStyleBlocks('const f = () => @{ color: red; }');
-      expect(result.text).toBe('const f = () => ` color: red; `');
+      expect(result.text).toBe('const f = () => `color: red;`');
     });
 
     it('should handle multiple arrow functions', () => {
+      // Single-line style blocks are trimmed
       const result = translateStyleBlocks('const a = () => @{ a: 1; }; const b = () => @{ b: 2; }');
-      expect(result.text).toBe('const a = () => ` a: 1; `; const b = () => ` b: 2; `');
+      expect(result.text).toBe('const a = () => `a: 1;`; const b = () => `b: 2;`');
     });
   });
 });
