@@ -58,6 +58,19 @@ export interface PropertyAccessor {
 }
 
 /**
+ * Information about a detected $param variable.
+ * Story 4.1: Variable Substitution
+ */
+export interface DollarVariable {
+  /** The variable name including $ prefix (e.g., '$primary', '$$var') */
+  varName: string;
+  /** Start index of $varname in the CSS string */
+  startIndex: number;
+  /** End index (exclusive) of $varname in the CSS string */
+  endIndex: number;
+}
+
+/**
  * Scanner options for customizing scan behavior.
  */
 export interface ScanOptions {
@@ -516,5 +529,142 @@ export class Scanner {
     }
 
     return accessors;
+  }
+
+  /**
+   * Finds $param variables in CSS zone.
+   *
+   * Story 4.1: Variable Substitution
+   *
+   * Detection rules:
+   * - $param is detected when $ is followed by a valid JS identifier character
+   * - Valid identifier start: [a-zA-Z_$]
+   * - Valid identifier char: [a-zA-Z0-9_$]
+   * - Identifier stops at first non-identifier character (hyphen, space, ;, {, etc.)
+   * - Bare $ (not followed by valid identifier start) is treated as literal text
+   *
+   * Protected contexts (detection skipped):
+   * - Inside CSS string literals ("..." or '...')
+   * - Inside /* ... *‍/ block comments
+   *
+   * Note: url() is NOT a protected context - $param inside url() IS substituted.
+   * Use {{ $param }} bridge syntax if you need dynamic content inside strings.
+   *
+   * @param cssZone - The CSS zone content to scan
+   * @returns Array of DollarVariable objects with varName and indices
+   */
+  findDollarVariables(cssZone: string): DollarVariable[] {
+    return Scanner.findDollarVariablesStatic(cssZone);
+  }
+
+  /**
+   * Static version of findDollarVariables for use without Scanner instantiation.
+   * Used internally by transpiler to avoid creating unnecessary Scanner instances.
+   *
+   * Story 4.1: Variable Substitution
+   *
+   * @param cssZone - The CSS zone content to scan
+   * @returns Array of DollarVariable objects with varName and indices
+   */
+  static findDollarVariablesStatic(cssZone: string): DollarVariable[] {
+    const variables: DollarVariable[] = [];
+
+    if (!cssZone) {
+      return variables;
+    }
+
+    // Context tracking for protected zones
+    // Note: url() is NOT protected - $param inside url() IS substituted
+    let inString = false;
+    let stringChar = '';
+    let inBlockComment = false;
+
+    let i = 0;
+
+    while (i < cssZone.length) {
+      const char = cssZone[i]!;
+      const nextChar = cssZone[i + 1];
+
+      // Track block comment start: /*
+      if (!inString && !inBlockComment && char === '/' && nextChar === '*') {
+        inBlockComment = true;
+        i += 2;
+        continue;
+      }
+
+      // Track block comment end: */
+      if (inBlockComment && char === '*' && nextChar === '/') {
+        inBlockComment = false;
+        i += 2;
+        continue;
+      }
+
+      // Track string literals (only when not in comment)
+      if (!inBlockComment && (char === '"' || char === "'")) {
+        if (!inString) {
+          inString = true;
+          stringChar = char;
+        } else if (char === stringChar) {
+          // Check for escaped quote
+          // Look back to count consecutive backslashes
+          let backslashCount = 0;
+          for (let j = i - 1; j >= 0 && cssZone[j] === '\\'; j--) {
+            backslashCount++;
+          }
+          // If odd number of backslashes, quote is escaped
+          if (backslashCount % 2 === 0) {
+            inString = false;
+          }
+        }
+        i++;
+        continue;
+      }
+
+      // Skip if in any protected context
+      if (inString || inBlockComment) {
+        i++;
+        continue;
+      }
+
+      // Check for $ followed by valid identifier start
+      if (char === '$' && nextChar !== undefined && Scanner.isIdentifierStart(nextChar)) {
+        const startIndex = i;
+        i++; // Move past $
+
+        // Consume identifier characters
+        let varName = '$';
+        while (i < cssZone.length && Scanner.isIdentifierChar(cssZone[i]!)) {
+          varName += cssZone[i];
+          i++;
+        }
+
+        variables.push({
+          varName,
+          startIndex,
+          endIndex: i,
+        });
+        continue;
+      }
+
+      i++;
+    }
+
+    return variables;
+  }
+
+  /**
+   * Checks if a character is a valid JS identifier start.
+   * Valid: a-z, A-Z, _, $
+   */
+  private static isIdentifierStart(char: string): boolean {
+    return /^[a-zA-Z_$]$/.test(char);
+  }
+
+  /**
+   * Checks if a character is a valid JS identifier character.
+   * Valid: a-z, A-Z, 0-9, _, $
+   */
+  private static isIdentifierChar(char: string): boolean {
+    return /^[a-zA-Z0-9_$]$/.test(char);
   }
 }

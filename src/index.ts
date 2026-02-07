@@ -50,6 +50,8 @@ interface ProcessedTemplate {
   templateBody: string;
   /** Whether any {{ expr }} expressions were found */
   hasExpressions: boolean;
+  /** Whether any $param variables were found */
+  hasDollarVariables: boolean;
 }
 
 // Re-export scanner types for consumers
@@ -61,8 +63,9 @@ export { Scanner } from './scanner.js';
  * - ZoneSplit: Result of zone separation (preamble/CSS)
  * - ExpressionSplit: Result of {{ }} expression splitting
  * - PropertyAccessor: Info about detected @(prop) accessor (propName, indices)
+ * - DollarVariable: Info about detected $param variable (varName, indices)
  */
-export type { ScanResult, ScanOptions, ZoneSplit, ExpressionSplit, PropertyAccessor } from './scanner.js';
+export type { ScanResult, ScanOptions, ZoneSplit, ExpressionSplit, PropertyAccessor, DollarVariable } from './scanner.js';
 
 // Re-export error types for consumers
 export {
@@ -84,7 +87,7 @@ export {
 } from './scope-tracker.js';
 
 /**
- * Runtime helper function for expression output.
+ * Runtime helper function for {{ expression }} output.
  * Story 2.4: Array auto-join and null/undefined handling.
  *
  * - null/undefined -> '' (React-style silent handling)
@@ -93,7 +96,20 @@ export {
  *   - null/undefined elements in arrays are converted to empty string
  * - other values -> String coercion
  */
-const LASS_EXPR_HELPER = `const __lassExpr = v => v == null ? '' : Array.isArray(v) ? v.flat(Infinity).map(x => x == null ? '' : String(x)).join('') : String(v);`;
+const LASS_SCRIPT_EXPRESSION_HELPER = `const __lassScriptExpression = v => v == null ? '' : Array.isArray(v) ? v.flat(Infinity).map(x => x == null ? '' : String(x)).join('') : String(v);`;
+
+/**
+ * Runtime helper function for $param variable substitution.
+ * Story 4.1: Variable Substitution
+ *
+ * - null -> 'unset' (CSS-meaningful fallback)
+ * - undefined or ReferenceError -> preserve '$name' unchanged
+ * - other values -> String coercion
+ *
+ * The getter function (g) delays evaluation so we can catch ReferenceError
+ * for non-existent variables.
+ */
+const LASS_SCRIPT_LOOKUP_HELPER = `const __lassScriptLookup = (n, g) => { try { const v = g(); return v === null ? 'unset' : v === undefined ? '$' + n : v; } catch { return '$' + n; } };`;
 
 // ============================================================================
 // TRANSPILATION PIPELINE
@@ -246,16 +262,72 @@ function resolvePropertyAccessors(cssZone: string, _options: TranspileOptions): 
 }
 
 /**
- * Step 3: Process expressions in CSS zone.
+ * Result from dollar variable resolution.
+ */
+interface DollarResolutionResult {
+  /** The CSS zone with $param replaced by helper calls */
+  cssZone: string;
+  /** Whether any $param variables were found */
+  hasDollarVariables: boolean;
+}
+
+/**
+ * Step 3: Replace $param variables with __lassScriptLookup() calls.
+ *
+ * Story 4.1: Variable Substitution
+ *
+ * Finds $param patterns in CSS zone and converts them to helper function calls.
+ * This enables $-prefixed variables from the preamble to be substituted into CSS
+ * with proper handling of null (→ 'unset') and undefined/missing (→ preserved).
+ *
+ * Protected contexts (strings, url(), comments) are skipped - $param inside these
+ * remains as literal text. Use {{ $param }} for dynamic content in protected contexts.
+ *
+ * @param cssZone - The CSS zone content
+ * @param _options - Transpile options (filename for errors)
+ * @returns Result with modified CSS zone and flag indicating if helpers needed
+ */
+function resolveDollarVariables(cssZone: string, _options: TranspileOptions): DollarResolutionResult {
+  if (!cssZone) {
+    return { cssZone, hasDollarVariables: false };
+  }
+
+  // Use static method to find all $param occurrences
+  const variables = Scanner.findDollarVariablesStatic(cssZone);
+
+  if (variables.length === 0) {
+    return { cssZone, hasDollarVariables: false };
+  }
+
+  // Process from end to start so indices remain valid
+  let result = cssZone;
+
+  for (let i = variables.length - 1; i >= 0; i--) {
+    const variable = variables[i]!;
+    const { varName, startIndex, endIndex } = variable;
+
+    // Replace $varName with ${__lassScriptLookup('name', () => $varName)}
+    // The name parameter is without the $ prefix (helper adds it back for preserved output)
+    const nameWithoutDollar = varName.slice(1); // Remove leading $
+    const replacement = `\${__lassScriptLookup('${nameWithoutDollar}', () => ${varName})}`;
+    result = result.slice(0, startIndex) + replacement + result.slice(endIndex);
+  }
+
+  return { cssZone: result, hasDollarVariables: true };
+}
+
+/**
+ * Step 4: Process expressions in CSS zone.
  *
  * Finds {{ expr }} expressions and converts them to template literal interpolations.
  * Story 2.5: Expressions are processed EVERYWHERE in CSS zone (strings, url(), comments).
  *
  * @param cssZone - The CSS zone content
+ * @param hasDollarVariables - Whether $param variables were found (passed through)
  * @param options - Transpile options (filename for errors)
  * @returns Processed template with body and expression flag
  */
-function processExpressions(cssZone: string, options: TranspileOptions): ProcessedTemplate {
+function processExpressions(cssZone: string, hasDollarVariables: boolean, options: TranspileOptions): ProcessedTemplate {
   const scanner = new Scanner(cssZone, { filename: options.filename });
   const exprSplit = scanner.findExpressions(cssZone);
 
@@ -268,35 +340,44 @@ function processExpressions(cssZone: string, options: TranspileOptions): Process
       // CSS chunk - escape for template literal
       templateBody += escapeForTemplateLiteral(exprSplit.parts[i]!);
     } else {
-      // JS expression - wrap in ${__lassExpr(...)} for array/null handling
-      templateBody += '${__lassExpr(' + exprSplit.parts[i] + ')}';
+      // JS expression - wrap in ${__lassScriptExpression(...)} for array/null handling
+      templateBody += '${__lassScriptExpression(' + exprSplit.parts[i] + ')}';
     }
   }
 
-  return { templateBody, hasExpressions };
+  return { templateBody, hasExpressions, hasDollarVariables };
 }
 
 /**
- * Step 4: Build final JavaScript module output.
+ * Step 5: Build final JavaScript module output.
  *
- * Assembles preamble, helper function (if needed), and template literal export.
+ * Assembles preamble, helper functions (if needed), and template literal export.
  *
  * @param zones - Detected zones from step 1
- * @param template - Processed template from step 2
+ * @param template - Processed template from step 4
  * @returns Final JavaScript module code
  */
 function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string {
-  // Include helper function if expressions are present
-  const helperLine = template.hasExpressions ? `${LASS_EXPR_HELPER}\n\n` : '';
+  // Include helper functions as needed
+  let helpers = '';
+  if (template.hasExpressions) {
+    helpers += LASS_SCRIPT_EXPRESSION_HELPER + '\n';
+  }
+  if (template.hasDollarVariables) {
+    helpers += LASS_SCRIPT_LOOKUP_HELPER + '\n';
+  }
+  if (helpers) {
+    helpers += '\n'; // Extra blank line after helpers
+  }
 
   // Include preamble if present (non-empty after trimming)
   if (zones.hasSeparator && zones.preamble.trim()) {
-    // Helper (if needed) + Preamble + blank line + export
+    // Helpers (if needed) + Preamble + blank line + export
     // Preamble executes when module is imported, variables are in scope
-    return `${helperLine}${zones.preamble}\n\nexport default \`${template.templateBody}\`;`;
+    return `${helpers}${zones.preamble}\n\nexport default \`${template.templateBody}\`;`;
   } else {
-    // No separator or empty/whitespace-only preamble - just export (with helper if needed)
-    return `${helperLine}export default \`${template.templateBody}\`;`;
+    // No separator or empty/whitespace-only preamble - just export (with helpers if needed)
+    return `${helpers}export default \`${template.templateBody}\`;`;
   }
 }
 
@@ -310,19 +391,21 @@ function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string 
  * The Story (Igloo Principle):
  * 1. Split the file into preamble and CSS zones at the ---
  * 2. Resolve @(prop) accessors to their values (Phase 1)
- * 3. Find {{ expressions }} and make them interpolations (Phase 2)
- * 4. Wrap it all in a JS module that exports CSS
+ * 3. Replace $param with ${$param} for variable substitution
+ * 4. Find {{ expressions }} and make them interpolations (Phase 2)
+ * 5. Wrap it all in a JS module that exports CSS
  *
  * Implementation History:
  * - Story 1.4: CSS passthrough - wraps input in JS module export
  * - Story 2.1: Two-zone detection - splits on ---, identifies preamble and CSS zones
  * - Story 2.2: Preamble execution - includes preamble in output, executes when imported
  * - Story 2.3: Expression interpolation - transforms {{ expr }} to ${expr} in template literal
- * - Story 2.4: Array auto-join - wraps expressions in __lassExpr() for array/null handling
+ * - Story 2.4: Array auto-join - wraps expressions in __lassScriptExpression() for array/null handling
  * - Story 2.5: Universal {{ }} - processed everywhere in CSS zone (strings, url(), comments)
  * - Story 3.2: @(prop) resolution - resolves @(prop) to previously-declared CSS values (Phase 1)
  * - Story 3.3: @(prop) in {{ }} - detects @(prop) inside expressions, quotes values for JS context
  * - Refactored: Changed from @prop to @(prop) for unambiguous syntax (supports custom properties)
+ * - Story 4.1: $param substitution - replaces $param with ${$param} for template literal interpolation
  *
  * @param source - The Lass source code
  * @param options - Transpilation options
@@ -338,10 +421,13 @@ export function transpile(
   // Step 2: Resolve @(prop) accessors (Phase 1 - before {{ }} processing)
   const resolvedCssZone = resolvePropertyAccessors(zones.cssZone, options);
 
-  // Step 3: Process {{ expressions }} in CSS zone (Phase 2)
-  const template = processExpressions(resolvedCssZone, options);
+  // Step 3: Replace $param with __lassScriptLookup() calls for variable substitution
+  const dollarResult = resolveDollarVariables(resolvedCssZone, options);
 
-  // Step 4: Assemble final JS module
+  // Step 4: Process {{ expressions }} in CSS zone (Phase 2)
+  const template = processExpressions(dollarResult.cssZone, dollarResult.hasDollarVariables, options);
+
+  // Step 5: Assemble final JS module
   const code = buildOutput(zones, template);
 
   return { code };

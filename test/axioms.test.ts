@@ -68,11 +68,13 @@ for (const axiom of axioms) {
   // Skip axioms that are not yet implemented or require Vite plugin context
   // - not-implemented: Feature not started
   // - in-progress: Feature infrastructure exists but not integrated (e.g., Story 3.1)
+  // - deferred: Feature removed from scope or deferred to later phase
   // - vite-only: Requires Vite plugin context
   const status = axiom.metadata.status as string;
   const shouldSkip = 
     status === 'not-implemented' || 
     status === 'in-progress' ||
+    status === 'deferred' ||
     status === 'vite-only';
 
   describe(axiom.feature, () => {

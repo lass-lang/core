@@ -173,18 +173,18 @@ p { margin: 10px; }`;
   });
 
   describe('expression interpolation (Story 2.3)', () => {
-    it('should wrap expressions in __lassExpr helper (Story 2.4)', () => {
+    it('should wrap expressions in __lassScriptExpression helper (Story 2.4)', () => {
       const { code } = transpile('const color = "blue"\n---\n.box { color: {{ color }}; }');
 
-      // Should contain ${__lassExpr(color)} interpolation (Story 2.4: wraps expressions)
-      expect(code).toContain('${__lassExpr(color)}');
+      // Should contain ${__lassScriptExpression(color)} interpolation (Story 2.4: wraps expressions)
+      expect(code).toContain('${__lassScriptExpression(color)}');
     });
 
-    it('should include __lassExpr helper function when expressions present', () => {
+    it('should include __lassScriptExpression helper function when expressions present', () => {
       const { code } = transpile('const color = "blue"\n---\n.box { color: {{ color }}; }');
 
       // Should contain the helper function
-      expect(code).toContain('const __lassExpr');
+      expect(code).toContain('const __lassScriptExpression');
     });
 
     it('should remove {{ }} markers from output', () => {
