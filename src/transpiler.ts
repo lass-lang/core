@@ -6,7 +6,7 @@
  */
 
 import { Scanner } from './scanner.js';
-import { cutByBraces, findPropertyValue } from './scope-tracker.js';
+import { cutByBraces, findPropertyValue, type ScopeSlice } from './scope-tracker.js';
 import { escapeForTemplateLiteral, escapeForJs } from './helpers.js';
 import { LASS_SCRIPT_EXPRESSION_HELPER, LASS_SCRIPT_LOOKUP_HELPER } from './constants.js';
 import { createContextState, updateContextState, isInProtectedContext } from './context-tracker.js';
@@ -559,6 +559,173 @@ function translateDollarVariablesInStyleBlock(text: string): DollarTranslationRe
 }
 
 // ============================================================================
+// STEP 5a-v2: SLICE-BASED STYLE BLOCK TRANSLATION
+// ============================================================================
+
+/**
+ * Translates @{ } style blocks using a slice-based approach.
+ * 
+ * This is the v2 implementation that replaces the recursive translateStyleBlocks.
+ * It uses cutByBraces to split the text into slices, then reassembles with
+ * proper delimiters. This avoids the nested context issues of the recursive approach.
+ * 
+ * Algorithm:
+ * 1. Cut text into slices using cutByBraces (handles @{, {{, { with proper nesting)
+ * 2. Process each slice based on its context type
+ * 3. Reassemble with appropriate delimiters:
+ *    - @{ → backtick (template literal)
+ *    - {{ → ${__lassScriptExpression(
+ *    - { → { (pass through)
+ *    - Corresponding closing delimiters
+ * 
+ * @param text - JS code containing @{ } style blocks
+ * @returns Result with translated text and flag for $param usage
+ */
+export function translateStyleBlocksV2(text: string): StyleBlockTranslationResult {
+  if (!text || !text.includes('@{')) {
+    return { text, hasDollarVariables: false };
+  }
+
+  const { slices } = cutByBraces(text);
+  
+  if (slices.length <= 1) {
+    // No braces found, return as-is
+    return { text, hasDollarVariables: false };
+  }
+
+  let result = '';
+  let hasDollarVars = false;
+
+  for (let i = 0; i < slices.length; i++) {
+    const slice = slices[i]!;
+    const nextSlice = slices[i + 1];
+    
+    // Process slice content based on its type
+    let content = slice.content;
+    
+    // Translate $param in style block content (CSS context inside @{)
+    if (slice.openedBy === '@{') {
+      const dollarResult = translateDollarVariablesInStyleBlock(content);
+      content = dollarResult.text;
+      if (dollarResult.hasDollarVariables) {
+        hasDollarVars = true;
+      }
+    }
+    
+    // Output the slice content
+    result += content;
+    
+    // Determine what delimiter to output based on transition to next slice
+    if (nextSlice) {
+      const isOpening = nextSlice.parent === i;
+      const isClosing = !isOpening && nextSlice.parent !== null && nextSlice.parent < i;
+      const isClosingToRoot = !isOpening && nextSlice.parent === null && slice.parent !== null;
+      
+      if (isOpening) {
+        // We're going deeper - output opening delimiter
+        switch (nextSlice.openedBy) {
+          case '@{':
+            result += '`';  // Style block becomes template literal
+            break;
+          case '{{':
+            result += '${__lassScriptExpression(';  // JS expression wrapper
+            break;
+          case '{':
+            result += '{';  // Regular brace
+            break;
+        }
+      } else if (isClosing || isClosingToRoot) {
+        // We're going back up - output closing delimiter(s)
+        result += getClosingDelimiters(slices, i, nextSlice);
+      }
+    }
+  }
+
+  return { text: result, hasDollarVariables: hasDollarVars };
+}
+
+/**
+ * Determines what closing delimiters to emit when transitioning between slices.
+ * 
+ * When moving from slice[i] to slice[i+1], we may need to close one or more
+ * scopes if the next slice's parent is higher up the tree.
+ * 
+ * @param slices - All slices from cutByBraces
+ * @param currentIndex - Current slice index
+ * @param nextSlice - The next slice we're transitioning to
+ * @returns String of closing delimiters to emit
+ */
+function getClosingDelimiters(
+  slices: ScopeSlice[],
+  currentIndex: number,
+  nextSlice: ScopeSlice
+): string {
+  // We need to close scopes from current slice back to next slice's parent level.
+  // 
+  // Key insight: When we transition from slice[i] to slice[i+1], we're closing
+  // the scope that CONTAINS slice[i]. That scope is indicated by slice[i].openedBy.
+  // 
+  // We walk up the parent chain, closing each scope until we reach the parent
+  // of nextSlice. But we don't close the scope that nextSlice is IN - we stop
+  // when we reach it.
+  //
+  // Example: Going from slice[3] (parent=2) to slice[4] (parent=1)
+  // - slice[3].openedBy = @{ → close with `
+  // - slice[3].parent = 2, but nextSlice.parent = 1
+  // - We need to check: is slice[3]'s parent (2) still above nextSlice.parent (1)?
+  // - Yes, so continue walking... but slice[2] is the {{ that nextSlice is still inside!
+  // 
+  // The fix: Only close the CURRENT slice's openedBy, then check if we need to
+  // close more by comparing parents.
+  
+  let closers = '';
+  const currentSlice = slices[currentIndex]!;
+  
+  // Close the current slice's scope
+  closers += getCloserForBrace(currentSlice.openedBy);
+  
+  // Check if we need to close more scopes
+  // We need to close additional scopes if we're jumping multiple levels
+  let walkParent = currentSlice.parent;
+  const targetParent = nextSlice.parent;
+  
+  // Walk up and close scopes until we reach the target parent level
+  while (walkParent !== null && walkParent !== targetParent) {
+    const parentSlice = slices[walkParent]!;
+    
+    // Check if this parent is still above the target
+    // If the parent's parent is >= targetParent, we need to close this level too
+    if (parentSlice.parent === targetParent || 
+        (targetParent !== null && parentSlice.parent !== null && parentSlice.parent < targetParent)) {
+      // We've reached or passed the target level, stop
+      break;
+    }
+    
+    // Close this scope
+    closers += getCloserForBrace(parentSlice.openedBy);
+    walkParent = parentSlice.parent;
+  }
+  
+  return closers;
+}
+
+/**
+ * Returns the closing delimiter for a given brace type.
+ */
+function getCloserForBrace(braceType: import('./scope-tracker.js').BraceType): string {
+  switch (braceType) {
+    case '@{':
+      return '`';  // Close template literal
+    case '{{':
+      return ')}';  // Close __lassScriptExpression(
+    case '{':
+      return '}';  // Close regular brace
+    default:
+      return '';
+  }
+}
+
+// ============================================================================
 // STEP 5b: EXPRESSION PROCESSING
 // ============================================================================
 
@@ -589,7 +756,7 @@ export function processExpressions(cssZone: string, hasDollarVariables: boolean,
       templateBody += escapeForTemplateLiteral(exprSplit.parts[i]!);
     } else {
       // JS expression - translate @{ } style blocks, then wrap in helper
-      const styleBlockResult = translateStyleBlocks(exprSplit.parts[i]!);
+      const styleBlockResult = translateStyleBlocksV2(exprSplit.parts[i]!);
       if (styleBlockResult.hasDollarVariables) {
         styleBlockHasDollarVars = true;
       }
@@ -622,7 +789,7 @@ export function buildOutput(zones: DetectedZones, template: ProcessedTemplate): 
   let preambleHasDollarVars = false;
   let translatedPreamble = zones.preamble;
   if (zones.hasSeparator && zones.preamble.trim()) {
-    const preambleResult = translateStyleBlocks(zones.preamble);
+    const preambleResult = translateStyleBlocksV2(zones.preamble);
     translatedPreamble = preambleResult.text;
     preambleHasDollarVars = preambleResult.hasDollarVariables;
   }
