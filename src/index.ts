@@ -6,8 +6,9 @@
  *
  * Transpilation Pipeline (The Story):
  * 1. detectZones() - Split source into preamble and CSS zones
- * 2. processExpressions() - Find {{ expr }} and build template literal body
- * 3. buildOutput() - Assemble final JS module from parts
+ * 2. stripLineComments() - Remove // comments from CSS zone
+ * 3. processExpressions() - Find {{ expr }} and build template literal body
+ * 4. buildOutput() - Assemble final JS module from parts
  *
  * This is the "igloo" view - each function is a building block.
  * Drill into any function to see the implementation details (the "physics").
@@ -432,10 +433,11 @@ function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string 
  *
  * The Story (Igloo Principle):
  * 1. Split the file into preamble and CSS zones at the ---
- * 2. Resolve @(prop) accessors to their values (Phase 1)
- * 3. Replace $param with ${$param} for variable substitution
- * 4. Find {{ expressions }} and make them interpolations (Phase 2)
- * 5. Wrap it all in a JS module that exports CSS
+ * 2. Strip // comments from CSS zone
+ * 3. Resolve @(prop) accessors to their values (Phase 1)
+ * 4. Replace $param with ${$param} for variable substitution
+ * 5. Find {{ expressions }} and make them interpolations (Phase 2)
+ * 6. Wrap it all in a JS module that exports CSS
  *
  * Implementation History:
  * - Story 1.4: CSS passthrough - wraps input in JS module export
@@ -449,6 +451,7 @@ function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string 
  * - Refactored: Changed from @prop to @(prop) for unambiguous syntax (supports custom properties)
  * - Story 4.1: $param substitution - replaces $param with ${$param} for template literal interpolation
  * - Story 4.2: @prop shorthand - normalizes @prop to @(prop) before resolution
+ * - Story 4.4: // comment stripping - removes single-line comments from CSS zone
  *
  * @param source - The Lass source code
  * @param options - Transpilation options
@@ -461,19 +464,22 @@ export function transpile(
   // Step 1: Split source into preamble and CSS zones
   const zones = detectZones(source, options);
 
-  // Step 2a: Normalize @prop shorthands to @(prop) form
-  const normalizedCssZone = normalizeStyleLookupShorthands(zones.cssZone);
+  // Step 2: Strip // comments from CSS zone (before any symbol resolution)
+  const strippedCssZone = Scanner.stripLineCommentsStatic(zones.cssZone);
 
-  // Step 2b: Resolve @(prop) accessors (Phase 1 - before {{ }} processing)
+  // Step 3a: Normalize @prop shorthands to @(prop) form
+  const normalizedCssZone = normalizeStyleLookupShorthands(strippedCssZone);
+
+  // Step 3b: Resolve @(prop) accessors (Phase 1 - before {{ }} processing)
   const resolvedCssZone = resolvePropertyAccessors(normalizedCssZone, options);
 
-  // Step 3: Replace $param with __lassScriptLookup() calls for variable substitution
+  // Step 4: Replace $param with __lassScriptLookup() calls for variable substitution
   const dollarResult = resolveDollarVariables(resolvedCssZone, options);
 
-  // Step 4: Process {{ expressions }} in CSS zone (Phase 2)
+  // Step 5: Process {{ expressions }} in CSS zone (Phase 2)
   const template = processExpressions(dollarResult.cssZone, dollarResult.hasDollarVariables, options);
 
-  // Step 5: Assemble final JS module
+  // Step 6: Assemble final JS module
   const code = buildOutput(zones, template);
 
   return { code };

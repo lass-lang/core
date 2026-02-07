@@ -9,6 +9,7 @@
  */
 
 import { LassTranspileError, ErrorCategory } from './errors.js';
+import { createContextState, updateContextState, isInProtectedContext } from './context-tracker.js';
 
 /**
  * Result of a scan operation.
@@ -586,11 +587,9 @@ export class Scanner {
       return variables;
     }
 
-    // Context tracking for protected zones
+    // Context tracking for protected zones (strings, comments)
     // Note: url() is NOT protected - $param inside url() IS substituted
-    let inString = false;
-    let stringChar = '';
-    let inBlockComment = false;
+    const state = createContextState();
 
     let i = 0;
 
@@ -598,43 +597,21 @@ export class Scanner {
       const char = cssZone[i]!;
       const nextChar = cssZone[i + 1];
 
-      // Track block comment start: /*
-      if (!inString && !inBlockComment && char === '/' && nextChar === '*') {
-        inBlockComment = true;
+      // Update context state (handles strings and comments)
+      const consumed = updateContextState(cssZone, i, state);
+      if (consumed === 2) {
         i += 2;
         continue;
       }
 
-      // Track block comment end: */
-      if (inBlockComment && char === '*' && nextChar === '/') {
-        inBlockComment = false;
-        i += 2;
-        continue;
-      }
-
-      // Track string literals (only when not in comment)
-      if (!inBlockComment && (char === '"' || char === "'")) {
-        if (!inString) {
-          inString = true;
-          stringChar = char;
-        } else if (char === stringChar) {
-          // Check for escaped quote
-          // Look back to count consecutive backslashes
-          let backslashCount = 0;
-          for (let j = i - 1; j >= 0 && cssZone[j] === '\\'; j--) {
-            backslashCount++;
-          }
-          // If odd number of backslashes, quote is escaped
-          if (backslashCount % 2 === 0) {
-            inString = false;
-          }
-        }
+      // Skip string quote characters (already handled by updateContextState)
+      if (char === '"' || char === "'") {
         i++;
         continue;
       }
 
       // Skip if in any protected context
-      if (inString || inBlockComment) {
+      if (isInProtectedContext(state)) {
         i++;
         continue;
       }
@@ -722,12 +699,9 @@ export class Scanner {
       return shorthands;
     }
 
-    // Context tracking for protected zones
+    // Context tracking for protected zones (strings, comments)
     // Note: url() is NOT a protected context - @prop inside url(@path) IS detected
-    // Only strings and comments are protected (same as $param behavior)
-    let inString = false;
-    let stringChar = '';
-    let inBlockComment = false;
+    const state = createContextState();
 
     // Track {{ }} script block depth (shorthand not allowed inside)
     let scriptBlockDepth = 0;
@@ -741,54 +715,34 @@ export class Scanner {
       const char = cssZone[i]!;
       const nextChar = cssZone[i + 1];
 
-      // Track block comment start: /*
-      if (!inString && !inBlockComment && char === '/' && nextChar === '*') {
-        inBlockComment = true;
+      // Update context state (handles strings and comments)
+      const consumed = updateContextState(cssZone, i, state);
+      if (consumed === 2) {
         i += 2;
         continue;
       }
 
-      // Track block comment end: */
-      if (inBlockComment && char === '*' && nextChar === '/') {
-        inBlockComment = false;
-        i += 2;
-        continue;
-      }
-
-      // Track string literals (only when not in comment)
-      if (!inBlockComment && (char === '"' || char === "'")) {
-        if (!inString) {
-          inString = true;
-          stringChar = char;
-        } else if (char === stringChar) {
-          // Check for escaped quote
-          let backslashCount = 0;
-          for (let j = i - 1; j >= 0 && cssZone[j] === '\\'; j--) {
-            backslashCount++;
-          }
-          if (backslashCount % 2 === 0) {
-            inString = false;
-          }
-        }
+      // Skip string quote characters (already handled by updateContextState)
+      if (char === '"' || char === "'") {
         i++;
         continue;
       }
 
-      // Track {{ }} script block depth
-      if (!inString && !inBlockComment && char === '{' && nextChar === '{') {
+      // Track {{ }} script block depth (only when not in protected context)
+      if (!isInProtectedContext(state) && char === '{' && nextChar === '{') {
         scriptBlockDepth++;
         i += 2;
         continue;
       }
 
-      if (!inString && !inBlockComment && char === '}' && nextChar === '}' && scriptBlockDepth > 0) {
+      if (!isInProtectedContext(state) && char === '}' && nextChar === '}' && scriptBlockDepth > 0) {
         scriptBlockDepth--;
         i += 2;
         continue;
       }
 
       // Skip if in any protected context OR inside {{ }}
-      if (inString || inBlockComment || scriptBlockDepth > 0) {
+      if (isInProtectedContext(state) || scriptBlockDepth > 0) {
         i++;
         continue;
       }
@@ -856,5 +810,157 @@ export class Scanner {
    */
   private static isCssIdentifierChar(char: string): boolean {
     return /^[a-zA-Z0-9_-]$/.test(char);
+  }
+
+  /**
+   * Strips // single-line comments from CSS zone.
+   *
+   * Story 4.4: Single-Line Comment Stripping
+   *
+   * Detection rules:
+   * - // to end of line (including newline) is removed
+   * - Skip detection inside protected contexts: strings, url(), /* *\/
+   * - Full-line comments remove the entire line
+   * - Inline comments preserve content before //
+   *
+   * Note: url() is protected here (unlike $param/@prop) because
+   * url(https://...) contains // as part of the URL protocol.
+   *
+   * @param cssZone - The CSS zone content to process
+   * @returns CSS zone with // comments stripped
+   * @throws LassTranspileError if unclosed /* comment detected
+   */
+  stripLineComments(cssZone: string): string {
+    return Scanner.stripLineCommentsStatic(cssZone);
+  }
+
+  /**
+   * Static version of stripLineComments for use without Scanner instantiation.
+   * Used internally by transpiler to avoid creating unnecessary Scanner instances.
+   *
+   * Story 4.4: Single-Line Comment Stripping
+   *
+   * @param cssZone - The CSS zone content to process
+   * @returns CSS zone with // comments stripped
+   * @throws LassTranspileError if unclosed /* comment detected
+   */
+  static stripLineCommentsStatic(cssZone: string): string {
+    if (!cssZone) {
+      return cssZone;
+    }
+
+    // Context tracking for protected zones (strings, block comments)
+    const state = createContextState();
+
+    // Local url() tracking - unique to this function because url(https://...)
+    // contains // that should NOT be treated as a comment
+    let inUrl = false;
+    let urlParenDepth = 0;
+
+    // Track position where /* started (for error reporting)
+    let blockCommentStartLine = -1;
+    let blockCommentStartOffset = -1;
+
+    let result = '';
+    let i = 0;
+
+    while (i < cssZone.length) {
+      const char = cssZone[i]!;
+      const nextChar = cssZone[i + 1];
+
+      // Track block comment start position for error reporting
+      if (!state.inString && !state.inBlockComment && char === '/' && nextChar === '*') {
+        blockCommentStartLine = Scanner.getLineNumberStatic(cssZone, i);
+        blockCommentStartOffset = i;
+      }
+
+      // Update context state (strings, block comments)
+      const consumed = updateContextState(cssZone, i, state);
+      if (consumed === 2) {
+        result += cssZone.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+
+      // Handle string quote characters
+      if (char === '"' || char === "'") {
+        result += char;
+        i++;
+        continue;
+      }
+
+      // Track url() context (only when not in string or block comment)
+      if (!isInProtectedContext(state) && !inUrl) {
+        if (cssZone.slice(i, i + 4).toLowerCase() === 'url(') {
+          inUrl = true;
+          urlParenDepth = 1;
+          result += cssZone.slice(i, i + 4);
+          i += 4;
+          continue;
+        }
+      }
+
+      // Handle characters inside url()
+      if (inUrl) {
+        if (char === '(') {
+          urlParenDepth++;
+        } else if (char === ')') {
+          urlParenDepth--;
+          if (urlParenDepth === 0) {
+            inUrl = false;
+          }
+        }
+        result += char;
+        i++;
+        continue;
+      }
+
+      // Skip if in any protected context (string or block comment)
+      if (isInProtectedContext(state)) {
+        result += char;
+        i++;
+        continue;
+      }
+
+      // Check for // line comment
+      if (char === '/' && nextChar === '/') {
+        // Find end of line (the comment is from // to just before the newline)
+        let endOfLine = i;
+        while (endOfLine < cssZone.length && cssZone[endOfLine] !== '\n' && cssZone[endOfLine] !== '\r') {
+          endOfLine++;
+        }
+        // Skip past the comment content, stop at the newline (don't consume it)
+        i = endOfLine;
+        // Content before // is already in result, newline will be added on next iteration
+        continue;
+      }
+
+      result += char;
+      i++;
+    }
+
+    // Check for unclosed block comment at end of file
+    if (state.inBlockComment) {
+      throw LassTranspileError.at(
+        'Unclosed /* comment',
+        ErrorCategory.SCAN,
+        blockCommentStartLine,
+        1,
+        blockCommentStartOffset
+      );
+    }
+
+    return result;
+  }
+
+  /**
+   * Gets the 1-based line number for a character offset (static version).
+   */
+  private static getLineNumberStatic(text: string, offset: number): number {
+    let line = 1;
+    for (let i = 0; i < offset && i < text.length; i++) {
+      if (text[i] === '\n') line++;
+    }
+    return line;
   }
 }
