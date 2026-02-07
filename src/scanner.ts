@@ -44,15 +44,16 @@ export interface ExpressionSplit {
 }
 
 /**
- * Information about a detected @prop accessor.
+ * Information about a detected @(prop) accessor.
  * Story 3.2: Basic Property Lookup
+ * Refactored: Changed from @prop to @(prop) for unambiguous syntax
  */
 export interface PropertyAccessor {
-  /** The property name (without @) */
+  /** The property name (without @ and parentheses) */
   propName: string;
-  /** Start index of @propname in the CSS string */
+  /** Start index of @(propname) in the CSS string */
   startIndex: number;
-  /** End index (exclusive) of @propname in the CSS string */
+  /** End index (exclusive) of @(propname) in the CSS string */
   endIndex: number;
 }
 
@@ -69,9 +70,10 @@ export interface ScanOptions {
  *
  * Story 1.4: Passthrough mode - returns input unchanged
  * Story 2.1: Zone detection - finds --- separator, splits into preamble/CSS
+ * Story 3.2: @(prop) detection - finds property accessors in value position
  *
  * Future implementations will:
- * - Detect $name, $(name), {{ expr }}, @{ }, @(prop) symbols
+ * - Detect $name, $(name), {{ expr }}, @{ } symbols
  * - Track context to skip symbols inside strings, urls, and comments
  */
 export class Scanner {
@@ -352,8 +354,8 @@ export class Scanner {
   }
 
   /**
-   * Known CSS at-rules that should NOT be detected as @prop accessors.
-   * These appear at statement position (start of line/after semicolon).
+   * Known CSS at-rules - kept for reference but not needed for @(prop) detection.
+   * The @(prop) syntax with parentheses is unambiguous - no collision with CSS at-rules.
    */
   private static readonly CSS_AT_RULES = new Set([
     'media',
@@ -374,18 +376,19 @@ export class Scanner {
   ]);
 
   /**
-   * Finds @prop accessors in CSS zone.
+   * Finds @(prop) accessors in CSS zone.
    *
    * Story 3.2: Basic Property Lookup
+   * Refactored: Changed from @prop to @(prop) for unambiguous syntax
    *
    * Detection rules:
-   * - @propname in CSS value position (after :) is a Lass accessor
-   * - @propname at statement position (start of line, after ; or {) is a CSS at-rule
-   * - Known CSS at-rules (@media, @layer, etc.) are never Lass accessors
+   * - @(propname) in CSS value position (after :) is a Lass accessor
+   * - The explicit parentheses make this unambiguous - no collision with CSS at-rules
+   * - Supports both standard properties and custom properties: @(border), @(--custom)
    *
-   * Valid CSS property names:
-   * - Start with letter (a-z, A-Z) or hyphen (vendor prefixes like -webkit-)
-   * - Followed by letters, digits, hyphens
+   * Valid CSS property names inside @():
+   * - Standard: letter or hyphen start, then letters/digits/hyphens
+   * - Custom: -- followed by letters/digits/hyphens
    *
    * @param cssZone - The CSS zone content to scan
    * @returns Array of PropertyAccessor objects with propName and indices
@@ -398,11 +401,15 @@ export class Scanner {
    * Static version of findPropertyAccessors for use without Scanner instantiation.
    * Used internally by transpiler to avoid creating unnecessary Scanner instances.
    *
-   * Story 3.3: Handles @prop inside {{ }} expressions.
-   * - {{ doesn't reset inValuePosition (JS expression can contain @prop)
+   * Story 3.3: Handles @(prop) inside {{ }} expressions.
+   * - {{ doesn't reset inValuePosition (JS expression can contain @(prop))
    * - }} doesn't reset inValuePosition (exiting expression, still in value)
    * - Single { resets inValuePosition (entering CSS block)
-   * - @prop inside {{ }} is detected and will be quoted during resolution
+   * - @(prop) inside {{ }} is detected and will be quoted during resolution
+   *
+   * Refactored: Changed from @prop to @(prop) for unambiguous syntax.
+   * This eliminates ambiguity in JS context: @(border-width) is clear,
+   * unlike @border-width which could be @border minus width.
    *
    * @param cssZone - The CSS zone content to scan
    * @returns Array of PropertyAccessor objects with propName and indices
@@ -414,9 +421,10 @@ export class Scanner {
       return accessors;
     }
 
-    // Pattern: @ followed by valid CSS property name characters
-    // Property names: start with letter or hyphen, then letters/digits/hyphens
-    const propNamePattern = /[a-zA-Z-][a-zA-Z0-9-]*/;
+    // Pattern for property name inside @():
+    // - Standard property: letter or hyphen start, then letters/digits/hyphens
+    // - Custom property: -- followed by letters/digits/hyphens
+    const propNamePattern = /^([a-zA-Z-][a-zA-Z0-9-]*|--[a-zA-Z0-9-]+)/;
 
     // Track if we're in value position (after :)
     let inValuePosition = false;
@@ -436,7 +444,7 @@ export class Scanner {
       }
 
       // Handle {{ - entering JS expression (Story 3.3)
-      // DON'T reset inValuePosition - we can have @prop inside expressions
+      // DON'T reset inValuePosition - we can have @(prop) inside expressions
       if (char === '{' && nextChar === '{') {
         expressionDepth++;
         i += 2;
@@ -472,34 +480,35 @@ export class Scanner {
         continue;
       }
 
-      // Check for @ symbol
-      if (char === '@') {
-        // Extract the potential property name after @
-        const remaining = cssZone.slice(i + 1);
-        const match = remaining.match(propNamePattern);
+      // Check for @( pattern - the explicit accessor syntax
+      if (char === '@' && nextChar === '(') {
+        // Find the closing parenthesis
+        const afterParen = cssZone.slice(i + 2);
+        const closeParenIdx = afterParen.indexOf(')');
 
-        if (match && match.index === 0) {
-          const propName = match[0];
+        if (closeParenIdx !== -1) {
+          const insideParens = afterParen.slice(0, closeParenIdx);
+          const match = insideParens.match(propNamePattern);
 
-          // Skip if it's a known CSS at-rule
-          if (Scanner.CSS_AT_RULES.has(propName.toLowerCase())) {
-            i++;
+          // Check if the entire content inside parens is a valid property name
+          if (match && match[0] === insideParens) {
+            const propName = match[0];
+
+            // Detect if we're in value position (after :)
+            // Story 3.3: This works inside {{ }} because we don't reset inValuePosition there
+            if (inValuePosition) {
+              accessors.push({
+                propName,
+                startIndex: i,
+                // @(propname) = @ + ( + propname + ) = 3 + propname.length
+                endIndex: i + 3 + propName.length,
+              });
+            }
+
+            // Move past the @(propname)
+            i += 3 + propName.length;
             continue;
           }
-
-          // Detect if we're in value position (after :)
-          // Story 3.3: This now works inside {{ }} because we don't reset inValuePosition there
-          if (inValuePosition) {
-            accessors.push({
-              propName,
-              startIndex: i,
-              endIndex: i + 1 + propName.length,
-            });
-          }
-
-          // Move past the @propname
-          i += 1 + propName.length;
-          continue;
         }
       }
 

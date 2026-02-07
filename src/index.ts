@@ -60,7 +60,7 @@ export { Scanner } from './scanner.js';
  * - ScanOptions: Options for scanner customization
  * - ZoneSplit: Result of zone separation (preamble/CSS)
  * - ExpressionSplit: Result of {{ }} expression splitting
- * - PropertyAccessor: Info about detected @prop accessor (propName, indices)
+ * - PropertyAccessor: Info about detected @(prop) accessor (propName, indices)
  */
 export type { ScanResult, ScanOptions, ZoneSplit, ExpressionSplit, PropertyAccessor } from './scanner.js';
 
@@ -133,7 +133,7 @@ function detectZones(source: string, options: TranspileOptions): DetectedZones {
 
 /**
  * Escapes a value for embedding in a JavaScript string literal.
- * Story 3.3: Used when @prop is inside {{ }} context.
+ * Story 3.3: Used when @(prop) is inside {{ }} context.
  *
  * Escapes: backslash, double quote, newline, carriage return
  *
@@ -149,24 +149,25 @@ function escapeForJs(value: string): string {
 }
 
 /**
- * Step 2: Resolve @prop accessors in CSS zone.
+ * Step 2: Resolve @(prop) accessors in CSS zone.
  *
  * Story 3.2: Basic Property Lookup
  * Story 3.3: Lookup in {{ }} Context
+ * Refactored: Changed from @prop to @(prop) for unambiguous syntax
  *
- * Finds @prop patterns in CSS value position and resolves them to their
+ * Finds @(prop) patterns in CSS value position and resolves them to their
  * previously-declared values using scope tracking utilities.
  *
  * Resolution rules:
- * - Property found in CSS context -> Replace @prop with resolved value
+ * - Property found in CSS context -> Replace @(prop) with resolved value
  * - Property found in JS context (inside {{ }}) -> Replace with quoted value
- * - Property not found -> Preserve @prop unchanged (PostCSS/future CSS compatibility)
+ * - Property not found -> Preserve @(prop) unchanged (PostCSS/future CSS compatibility)
  *
  * This is Phase 1 of transpilation and runs BEFORE {{ }} processing.
  *
  * @param cssZone - The CSS zone content
  * @param options - Transpile options (filename for errors)
- * @returns CSS zone with @prop accessors resolved (or preserved if not found)
+ * @returns CSS zone with @(prop) accessors resolved (or preserved if not found)
  */
 function resolvePropertyAccessors(cssZone: string, _options: TranspileOptions): string {
   if (!cssZone) {
@@ -206,7 +207,7 @@ function resolvePropertyAccessors(cssZone: string, _options: TranspileOptions): 
     }
   }
 
-  // Build result by replacing @prop with resolved values (or preserving)
+  // Build result by replacing @(prop) with resolved values (or preserving)
   // Process from end to start so indices remain valid
   let result = cssZone;
 
@@ -214,7 +215,7 @@ function resolvePropertyAccessors(cssZone: string, _options: TranspileOptions): 
     const accessor = accessors[i]!;
     const { propName, startIndex, endIndex } = accessor;
 
-    // Find which slice contains this @prop
+    // Find which slice contains this @(prop)
     let sliceIndex = 0;
     for (let s = slices.length - 1; s >= 0; s--) {
       if (startIndex >= sliceStartPositions[s]!) {
@@ -230,9 +231,9 @@ function resolvePropertyAccessors(cssZone: string, _options: TranspileOptions): 
     const value = findPropertyValue(propName, slices, sliceIndex, positionInSlice);
 
     // Only replace if we found a value (non-empty string)
-    // If not found, preserve the original @prop (PostCSS/future CSS compatibility)
+    // If not found, preserve the original @(prop) (PostCSS/future CSS compatibility)
     if (value !== '') {
-      // Story 3.3: If @prop is inside a JS-type slice, quote the value
+      // Story 3.3: If @(prop) is inside a JS-type slice, quote the value
       const slice = slices[sliceIndex]!;
       const replacement = slice.type === 'js' 
         ? `"${escapeForJs(value)}"` 
@@ -308,7 +309,7 @@ function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string 
  *
  * The Story (Igloo Principle):
  * 1. Split the file into preamble and CSS zones at the ---
- * 2. Resolve @prop accessors to their values (Phase 1)
+ * 2. Resolve @(prop) accessors to their values (Phase 1)
  * 3. Find {{ expressions }} and make them interpolations (Phase 2)
  * 4. Wrap it all in a JS module that exports CSS
  *
@@ -319,8 +320,9 @@ function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string 
  * - Story 2.3: Expression interpolation - transforms {{ expr }} to ${expr} in template literal
  * - Story 2.4: Array auto-join - wraps expressions in __lassExpr() for array/null handling
  * - Story 2.5: Universal {{ }} - processed everywhere in CSS zone (strings, url(), comments)
- * - Story 3.2: @prop resolution - resolves @prop to previously-declared CSS values (Phase 1)
- * - Story 3.3: @prop in {{ }} - detects @prop inside expressions, quotes values for JS context
+ * - Story 3.2: @(prop) resolution - resolves @(prop) to previously-declared CSS values (Phase 1)
+ * - Story 3.3: @(prop) in {{ }} - detects @(prop) inside expressions, quotes values for JS context
+ * - Refactored: Changed from @prop to @(prop) for unambiguous syntax (supports custom properties)
  *
  * @param source - The Lass source code
  * @param options - Transpilation options
@@ -333,7 +335,7 @@ export function transpile(
   // Step 1: Split source into preamble and CSS zones
   const zones = detectZones(source, options);
 
-  // Step 2: Resolve @prop accessors (Phase 1 - before {{ }} processing)
+  // Step 2: Resolve @(prop) accessors (Phase 1 - before {{ }} processing)
   const resolvedCssZone = resolvePropertyAccessors(zones.cssZone, options);
 
   // Step 3: Process {{ expressions }} in CSS zone (Phase 2)

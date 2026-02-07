@@ -1,14 +1,15 @@
 /**
- * Tests for @prop property accessor inside {{ }} expressions.
+ * Tests for @(prop) property accessor inside {{ }} expressions.
  *
  * Story 3.3: Lookup in {{ }} Context
+ * Refactored: Changed from @prop to @(prop) for unambiguous syntax
  *
  * Tests cover:
- * - Simple @prop inside {{ }} - resolves and quotes value
- * - @prop with JS logic - parseInt, math operations
- * - @prop inside template literals within {{ }}
- * - Multiple @prop in one expression
- * - @prop not found inside {{ }} - preserved (causes JS error)
+ * - Simple @(prop) inside {{ }} - resolves and quotes value
+ * - @(prop) with JS logic - parseInt, math operations
+ * - @(prop) inside template literals within {{ }}
+ * - Multiple @(prop) in one expression
+ * - @(prop) not found inside {{ }} - preserved (causes JS error)
  * - Nested scope lookup from inside {{ }}
  */
 
@@ -24,36 +25,36 @@ async function executeTranspiledCode(code: string): Promise<string> {
   return module.default;
 }
 
-describe('Story 3.3: @prop inside {{ }} expressions', () => {
+describe('Story 3.3: @(prop) inside {{ }} expressions', () => {
   describe('AC4: Simple expression case', () => {
-    test('basic {{ @prop }} resolves to quoted value', async () => {
+    test('basic {{ @(prop) }} resolves to quoted value', async () => {
       const input = `---
 .box {
   color: blue;
-  border-color: {{ @color }};
+  border-color: {{ @(color) }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
       expect(output).toContain('border-color: blue');
     });
 
-    test('@prop in expression finds value from same block', async () => {
+    test('@(prop) in expression finds value from same block', async () => {
       const input = `---
 .card {
   padding: 20px;
-  margin: {{ @padding }};
+  margin: {{ @(padding) }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
       expect(output).toContain('margin: 20px');
     });
 
-    test('@prop in expression finds value from parent scope', async () => {
+    test('@(prop) in expression finds value from parent scope', async () => {
       const input = `---
 .parent {
   border: solid;
   .child {
-    outline: {{ @border }};
+    outline: {{ @(border) }};
   }
 }`;
       const { code } = transpile(input);
@@ -63,34 +64,34 @@ describe('Story 3.3: @prop inside {{ }} expressions', () => {
   });
 
   describe('AC5: Expression with JS logic', () => {
-    test('parseInt(@prop) * 2 works with pixel values', async () => {
+    test('parseInt(@(prop)) * 2 works with pixel values', async () => {
       const input = `---
 .box {
   padding: 16px;
-  margin: {{ parseInt(@padding) * 2 }}px;
+  margin: {{ parseInt(@(padding)) * 2 }}px;
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
       expect(output).toContain('margin: 32px');
     });
 
-    test('math with multiple @prop references', async () => {
+    test('math with multiple @(prop) references', async () => {
       const input = `---
 .box {
   padding: 10px;
   margin: 5px;
-  total: {{ parseInt(@padding) + parseInt(@margin) }}px;
+  total: {{ parseInt(@(padding)) + parseInt(@(margin)) }}px;
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
       expect(output).toContain('total: 15px');
     });
 
-    test('string operations with @prop', async () => {
+    test('string operations with @(prop)', async () => {
       const input = `---
 .box {
   color: blue;
-  content: {{ @color.toUpperCase() }};
+  content: {{ @(color).toUpperCase() }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
@@ -98,26 +99,26 @@ describe('Story 3.3: @prop inside {{ }} expressions', () => {
     });
   });
 
-  describe('AC6: @prop inside JS template literals', () => {
-    test('template literal with ${@prop}', async () => {
+  describe('AC6: @(prop) inside JS template literals', () => {
+    test('template literal with ${@(prop)}', async () => {
       const input = `---
 .box {
   color: blue;
-  {{ \`border-color: \${@color};\` }}
+  {{ \`border-color: \${@(color)};\` }}
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
       expect(output).toContain('border-color: blue');
     });
 
-    test('multiple @prop in template literal', async () => {
-      // Note: @prop inside ${} within backticks within {{ }}
+    test('multiple @(prop) in template literal', async () => {
+      // Note: @(prop) inside ${} within backticks within {{ }}
       // This is a complex nesting that requires proper escaping
       const input = `---
 .box {
   width: 100px;
   height: 50px;
-  content: {{ "Size: " + @width + " x " + @height }};
+  content: {{ "Size: " + @(width) + " x " + @(height) }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
@@ -126,25 +127,25 @@ describe('Story 3.3: @prop inside {{ }} expressions', () => {
   });
 
   describe('edge cases', () => {
-    test('multiple @prop in one {{ }} expression', async () => {
+    test('multiple @(prop) in one {{ }} expression', async () => {
       const input = `---
 .box {
   width: 100;
   height: 50;
-  content: {{ @width + " x " + @height }};
+  content: {{ @(width) + " x " + @(height) }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
       expect(output).toContain('content: 100 x 50');
     });
 
-    test('@prop not found inside {{ }} is preserved (causes JS error)', async () => {
+    test('@(prop) not found inside {{ }} is preserved (causes JS error)', async () => {
       const input = `---
 .box {
-  color: {{ @nonexistent }};
+  color: {{ @(nonexistent) }};
 }`;
-      // @nonexistent is not found, so it's preserved as @nonexistent
-      // This causes a JS error because @nonexistent is not valid JS
+      // @(nonexistent) is not found, so it's preserved as @(nonexistent)
+      // This causes a JS error because @(nonexistent) is not valid JS
       await expect(async () => {
         const { code } = transpile(input);
         await executeTranspiledCode(code);
@@ -155,20 +156,20 @@ describe('Story 3.3: @prop inside {{ }} expressions', () => {
       const input = `---
 .box {
   font-family: "Arial";
-  content: {{ @font-family }};
+  content: {{ @(font-family) }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
       expect(output).toContain('content: "Arial"');
     });
 
-    test('@prop in CSS context vs JS context', async () => {
+    test('@(prop) in CSS context vs JS context', async () => {
       // Same property accessed in CSS context (raw) and JS context (quoted)
       const input = `---
 .box {
   color: blue;
-  border-color: @color;
-  background: {{ @color }};
+  border-color: @(color);
+  background: {{ @(color) }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
@@ -178,12 +179,12 @@ describe('Story 3.3: @prop inside {{ }} expressions', () => {
       expect(output).toContain('background: blue');
     });
 
-    test('nested {{ }} inside CSS block with @prop', async () => {
+    test('nested {{ }} inside CSS block with @(prop)', async () => {
       const input = `---
 .parent {
   padding: 10px;
   .child {
-    margin: {{ parseInt(@padding) * 2 }}px;
+    margin: {{ parseInt(@(padding)) * 2 }}px;
   }
 }`;
       const { code } = transpile(input);
@@ -196,7 +197,7 @@ describe('Story 3.3: @prop inside {{ }} expressions', () => {
 .box {
   content: "line1
 line2";
-  other: {{ @content }};
+  other: {{ @(content) }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
@@ -209,7 +210,7 @@ line2";
       const input = `---
 .box {
   content: "path\\\\to\\"file\\"";
-  other: {{ @content }};
+  other: {{ @(content) }};
 }`;
       const { code } = transpile(input);
       const output = await executeTranspiledCode(code);
@@ -221,15 +222,15 @@ line2";
   });
 
   describe('scanner detection', () => {
-    test('scanner detects @prop inside {{ }}', () => {
-      const cssZone = '.box { color: blue; background: {{ @color }}; }';
+    test('scanner detects @(prop) inside {{ }}', () => {
+      const cssZone = '.box { color: blue; background: {{ @(color) }}; }';
       const accessors = Scanner.findPropertyAccessorsStatic(cssZone);
       expect(accessors).toHaveLength(1);
       expect(accessors[0]!.propName).toBe('color');
     });
 
-    test('scanner detects multiple @prop inside {{ }}', () => {
-      const cssZone = '.box { a: 1; b: 2; c: {{ @a + @b }}; }';
+    test('scanner detects multiple @(prop) inside {{ }}', () => {
+      const cssZone = '.box { a: 1; b: 2; c: {{ @(a) + @(b) }}; }';
       const accessors = Scanner.findPropertyAccessorsStatic(cssZone);
       expect(accessors).toHaveLength(2);
       expect(accessors[0]!.propName).toBe('a');
@@ -237,8 +238,8 @@ line2";
     });
 
     test('scanner handles {{ }} nesting correctly', () => {
-      // Multiple {{ }} in same block, each with @prop
-      const cssZone = '.box { x: 1; a: {{ @x }}; b: {{ @x }}; }';
+      // Multiple {{ }} in same block, each with @(prop)
+      const cssZone = '.box { x: 1; a: {{ @(x) }}; b: {{ @(x) }}; }';
       const accessors = Scanner.findPropertyAccessorsStatic(cssZone);
       expect(accessors).toHaveLength(2);
     });
