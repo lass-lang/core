@@ -719,8 +719,12 @@ export class Scanner {
     // Note: url() is NOT a protected context - @prop inside url(@path) IS detected
     const state = createContextState();
 
-    // Track {{ }} script block depth (shorthand not allowed inside)
-    let scriptBlockDepth = 0;
+    // Track context stack with brace depth for each level
+    // Each entry: { type: 'css' | 'js', braceDepth: number }
+    // We start in CSS context. {{ pushes 'js', @{ pushes 'css' inside js
+    // Shorthand is allowed when current context type is 'css'
+    type ContextEntry = { type: 'css' | 'js'; braceDepth: number };
+    const contextStack: ContextEntry[] = [{ type: 'css', braceDepth: 0 }];
 
     // Track if we're in value position (after :)
     let inValuePosition = false;
@@ -744,21 +748,71 @@ export class Scanner {
         continue;
       }
 
-      // Track {{ }} script block depth (only when not in protected context)
-      if (!isInProtectedContext(state) && char === '{' && nextChar === '{') {
-        scriptBlockDepth++;
+      // Skip if in protected context (strings, comments)
+      if (isInProtectedContext(state)) {
+        i++;
+        continue;
+      }
+
+      // Track context transitions
+      const currentEntry = contextStack[contextStack.length - 1]!;
+
+      // Check for {{ - enters JS context
+      if (char === '{' && nextChar === '{') {
+        contextStack.push({ type: 'js', braceDepth: 0 });
         i += 2;
         continue;
       }
 
-      if (!isInProtectedContext(state) && char === '}' && nextChar === '}' && scriptBlockDepth > 0) {
-        scriptBlockDepth--;
+      // Check for }} - exits JS context
+      if (char === '}' && nextChar === '}') {
+        // Pop until we find a 'js' context (may need to pop @{ css first)
+        while (contextStack.length > 1 && contextStack[contextStack.length - 1]!.type !== 'js') {
+          contextStack.pop();
+        }
+        if (contextStack.length > 1) {
+          contextStack.pop(); // pop the 'js'
+        }
         i += 2;
         continue;
       }
 
-      // Skip if in any protected context OR inside {{ }}
-      if (isInProtectedContext(state) || scriptBlockDepth > 0) {
+      // Check for @{ - enters CSS context (style block inside JS)
+      if (char === '@' && nextChar === '{' && currentEntry.type === 'js') {
+        contextStack.push({ type: 'css', braceDepth: 0 });
+        i += 2;
+        continue;
+      }
+
+      // Track single braces within @{ CSS context (for nested CSS blocks)
+      if (currentEntry.type === 'css' && contextStack.length > 1) {
+        // We're in a @{ block (not the root CSS context)
+        if (char === '{') {
+          currentEntry.braceDepth++;
+          inValuePosition = false;
+          i++;
+          continue;
+        }
+
+        if (char === '}') {
+          if (currentEntry.braceDepth > 0) {
+            // Closing a nested CSS block within @{
+            currentEntry.braceDepth--;
+            inValuePosition = false;
+          } else {
+            // Closing the @{ block itself
+            contextStack.pop();
+          }
+          i++;
+          continue;
+        }
+      }
+
+      // Get current context type
+      const currentContext = contextStack[contextStack.length - 1]!.type;
+
+      // Skip if in JS context (not inside a @{ block)
+      if (currentContext === 'js') {
         i++;
         continue;
       }

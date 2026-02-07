@@ -3,6 +3,7 @@
  *
  * Story 3.1: CSS Accumulator in Transpiler
  * Story 3.3: Lookup in {{ }} Context
+ * Story 5.1: @{ } Style Block context tracking
  *
  * This module provides utilities for:
  * 1. Cutting CSS into slices at brace boundaries
@@ -15,19 +16,32 @@
  * - Each slice tracks its type ('css' or 'js') based on brace type
  * - Each slice has a parent reference for easy scope walking
  * - findPropertyValue() skips JS-type slices during lookup
+ *
+ * Story 5.1 additions:
+ * - @{ } creates CSS context inside JS context
+ * - Context nesting: CSS → {{ JS → @{ CSS → {{ JS }} → CSS } → JS }} → CSS
  */
+
+/**
+ * Brace types for context tracking.
+ * Story 5.1: Added '@{' for style blocks.
+ */
+export type BraceType = '{{' | '{' | '@{' | null;
 
 /**
  * A single scope slice with metadata.
  * Story 3.3: Added type and parent for scope tracking.
+ * Story 5.1: Added openedBy to track brace type.
  */
 export interface ScopeSlice {
   /** The text content of this slice */
   content: string;
-  /** Type of scope: 'css' for { }, 'js' for {{ }} */
+  /** Type of scope: 'css' for { } and @{ }, 'js' for {{ }} */
   type: 'css' | 'js';
   /** Index of parent slice, or null for root-level slices */
   parent: number | null;
+  /** What brace type opened this slice: '{{', '{', '@{', or null for root */
+  openedBy: BraceType;
 }
 
 /**
@@ -43,14 +57,27 @@ export interface ScopeSlices {
 }
 
 /**
+ * Context frame for tracking nested brace scopes.
+ */
+interface ContextFrame {
+  braceType: BraceType;
+  sliceIndex: number;
+}
+
+/**
  * Cuts CSS text into slices at brace boundaries.
  *
- * Handles both single braces ({ }) for CSS blocks and double braces
- * ({{ }}) for JS expressions. Each brace pair increases/decreases depth by 1.
+ * Handles three brace types:
+ * - { } for CSS blocks (CSS context)
+ * - {{ }} for JS expressions (JS context)
+ * - @{ } for style blocks (CSS context inside JS)
  *
  * Story 3.3: Each slice now includes:
- * - type: 'css' for content inside { }, 'js' for content inside {{ }}
+ * - type: 'css' for content inside { } and @{ }, 'js' for content inside {{ }}
  * - parent: index of the parent slice for scope walking
+ *
+ * Story 5.1: @{ } creates CSS context inside JS, enabling @(prop) resolution
+ * inside style blocks.
  *
  * Example with CSS nesting:
  * ```
@@ -76,13 +103,27 @@ export interface ScopeSlices {
  * ]
  * ```
  *
+ * Example with style block:
+ * ```
+ * Input: ".box { {{ @{ color: red; } }} }"
+ * Slices: [
+ *   { content: ".box ", type: 'css', parent: null },
+ *   { content: " ", type: 'css', parent: 0 },
+ *   { content: " ", type: 'js', parent: 1 },
+ *   { content: " color: red; ", type: 'css', parent: 2 },  // CSS inside @{ }
+ *   { content: " ", type: 'js', parent: 1 },
+ *   { content: " ", type: 'css', parent: 0 },
+ *   { content: "", type: 'css', parent: null }
+ * ]
+ * ```
+ *
  * @param cssZone - The CSS text to split
  * @returns Object with slices array, minDepth, and maxDepth
  */
 export function cutByBraces(cssZone: string): ScopeSlices {
   if (!cssZone) {
     return { 
-      slices: [{ content: '', type: 'css', parent: null }], 
+      slices: [{ content: '', type: 'css', parent: null, openedBy: null }], 
       minDepth: 0, 
       maxDepth: 0 
     };
@@ -90,8 +131,10 @@ export function cutByBraces(cssZone: string): ScopeSlices {
 
   const slices: ScopeSlice[] = [];
   const parentStack: number[] = [];  // Stack of parent slice indices
+  const contextStack: ContextFrame[] = [];  // Stack of brace types for matching
   let currentSlice = '';
   let currentType: 'css' | 'js' = 'css';
+  let currentOpenedBy: BraceType = null;  // What opened the current slice
   let depth = 0;
   let minDepth = 0;
   let maxDepth = 0;
@@ -102,51 +145,76 @@ export function cutByBraces(cssZone: string): ScopeSlices {
 
     // Check for {{ (double opening brace - JS expression)
     if (char === '{' && nextChar === '{') {
-      // Push current slice with current parent
+      // Push current slice with current parent and openedBy
       const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
-      slices.push({ content: currentSlice, type: currentType, parent });
+      slices.push({ content: currentSlice, type: currentType, parent, openedBy: currentOpenedBy });
       // The slice we just pushed becomes the parent for nested content
       parentStack.push(slices.length - 1);
+      contextStack.push({ braceType: '{{', sliceIndex: slices.length - 1 });
       currentSlice = '';
       currentType = 'js';  // Entering JS expression
+      currentOpenedBy = '{{';
       depth++;
       maxDepth = Math.max(maxDepth, depth);
       i++;  // Skip the second {
     }
     // Check for }} (double closing brace - JS expression)
     else if (char === '}' && nextChar === '}') {
-      // Push current slice with current parent
+      // Push current slice with current parent and openedBy
       const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
-      slices.push({ content: currentSlice, type: currentType, parent });
+      slices.push({ content: currentSlice, type: currentType, parent, openedBy: currentOpenedBy });
       // Pop parent since we're exiting this scope
       parentStack.pop();
+      contextStack.pop();
       currentSlice = '';
-      currentType = 'css';  // Exiting JS returns to CSS
+      // Determine what type and openedBy to return to based on context stack
+      currentType = getContextType(contextStack);
+      currentOpenedBy = getContextOpenedBy(contextStack);
       depth--;
       minDepth = Math.min(minDepth, depth);
       i++;  // Skip the second }
     }
-    // Single { (CSS block)
-    else if (char === '{') {
-      // Push current slice with current parent
+    // Check for @{ (style block - CSS inside JS)
+    else if (char === '@' && nextChar === '{') {
+      // Push current slice with current parent and openedBy
       const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
-      slices.push({ content: currentSlice, type: currentType, parent });
+      slices.push({ content: currentSlice, type: currentType, parent, openedBy: currentOpenedBy });
       // The slice we just pushed becomes the parent for nested content
       parentStack.push(slices.length - 1);
+      contextStack.push({ braceType: '@{', sliceIndex: slices.length - 1 });
       currentSlice = '';
-      currentType = 'css';  // CSS block is CSS context
+      currentType = 'css';  // @{ } creates CSS context
+      currentOpenedBy = '@{';
+      depth++;
+      maxDepth = Math.max(maxDepth, depth);
+      i++;  // Skip the {
+    }
+    // Single { (CSS block)
+    else if (char === '{') {
+      // Push current slice with current parent and openedBy
+      const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
+      slices.push({ content: currentSlice, type: currentType, parent, openedBy: currentOpenedBy });
+      // The slice we just pushed becomes the parent for nested content
+      parentStack.push(slices.length - 1);
+      contextStack.push({ braceType: '{', sliceIndex: slices.length - 1 });
+      currentSlice = '';
+      currentOpenedBy = '{';
+      // CSS block stays in current type (CSS if in CSS, JS if in JS)
       depth++;
       maxDepth = Math.max(maxDepth, depth);
     }
-    // Single } (CSS block)
+    // Single } (closes CSS block, @{ block, or is part of JS)
     else if (char === '}') {
-      // Push current slice with current parent
+      // Push current slice with current parent and openedBy
       const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
-      slices.push({ content: currentSlice, type: currentType, parent });
+      slices.push({ content: currentSlice, type: currentType, parent, openedBy: currentOpenedBy });
       // Pop parent since we're exiting this scope
       parentStack.pop();
+      contextStack.pop();
       currentSlice = '';
-      currentType = 'css';  // Exiting always returns to CSS
+      // Determine what type and openedBy to return to based on context stack
+      currentType = getContextType(contextStack);
+      currentOpenedBy = getContextOpenedBy(contextStack);
       depth--;
       minDepth = Math.min(minDepth, depth);
     } else {
@@ -156,9 +224,41 @@ export function cutByBraces(cssZone: string): ScopeSlices {
 
   // Always add trailing content (even if empty) to maintain consistent structure
   const parent = parentStack.length > 0 ? parentStack[parentStack.length - 1]! : null;
-  slices.push({ content: currentSlice, type: currentType, parent });
+  slices.push({ content: currentSlice, type: currentType, parent, openedBy: currentOpenedBy });
 
   return { slices, minDepth, maxDepth };
+}
+
+/**
+ * Determines the current context type based on the context stack.
+ * 
+ * - Empty stack or top is '{' → 'css'
+ * - Top is '{{' → 'js'
+ * - Top is '@{' → 'css' (style block creates CSS inside JS)
+ */
+function getContextType(contextStack: ContextFrame[]): 'css' | 'js' {
+  if (contextStack.length === 0) {
+    return 'css';
+  }
+  const top = contextStack[contextStack.length - 1]!;
+  switch (top.braceType) {
+    case '{{':
+      return 'js';
+    case '@{':
+    case '{':
+    default:
+      return 'css';
+  }
+}
+
+/**
+ * Determines what brace opened the current context based on the context stack.
+ */
+function getContextOpenedBy(contextStack: ContextFrame[]): BraceType {
+  if (contextStack.length === 0) {
+    return null;
+  }
+  return contextStack[contextStack.length - 1]!.braceType;
 }
 
 /**
@@ -201,6 +301,11 @@ export function findPropertyValue(
     'gi'
   );
 
+  // Helper to check if a value is resolved (doesn't contain @(...) references)
+  const isResolvedValue = (value: string): boolean => {
+    return !value.includes('@(');
+  };
+
   // Search current slice first (with position limit for self-reference protection)
   const currentSlice = slices[currentIndex]!;
   if (currentSlice.type === 'css') {
@@ -209,7 +314,11 @@ export function findPropertyValue(
       : currentSlice.content;
     const match = findLastMatch(searchContent, pattern);
     if (match) {
-      return match.trim();
+      const trimmed = match.trim();
+      // Skip values that contain unresolved @(...) references
+      if (isResolvedValue(trimmed)) {
+        return trimmed;
+      }
     }
   }
 
@@ -252,7 +361,11 @@ export function findPropertyValue(
     // Search this slice
     const match = findLastMatch(slice.content, pattern);
     if (match) {
-      return match.trim();
+      const trimmed = match.trim();
+      // Skip values that contain unresolved @(...) references
+      if (isResolvedValue(trimmed)) {
+        return trimmed;
+      }
     }
   }
 

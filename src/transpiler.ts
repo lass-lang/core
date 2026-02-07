@@ -9,6 +9,7 @@ import { Scanner } from './scanner.js';
 import { cutByBraces, findPropertyValue } from './scope-tracker.js';
 import { escapeForTemplateLiteral, escapeForJs } from './helpers.js';
 import { LASS_SCRIPT_EXPRESSION_HELPER, LASS_SCRIPT_LOOKUP_HELPER } from './constants.js';
+import { createContextState, updateContextState, isInProtectedContext } from './context-tracker.js';
 import type { DetectedZones, ProcessedTemplate, DollarResolutionResult, TranspileOptions } from './types.js';
 
 // ============================================================================
@@ -139,8 +140,8 @@ export function resolvePropertyAccessors(cssZone: string, _options: TranspileOpt
   const { slices } = cutByBraces(cssZone);
 
   // Build a map of character positions to slice indices
-  // cutByBraces splits at { and }, so we need to track where each slice starts
-  // Account for {{ (2 chars) vs { (1 char) by reconstructing from slice content and types
+  // cutByBraces splits at braces, so we need to track where each slice starts
+  // Use openedBy to determine brace size: '{{' = 2, '@{' = 2, '{' = 1, null = 0
   const sliceStartPositions: number[] = [];
   let pos = 0;
   for (let s = 0; s < slices.length; s++) {
@@ -150,13 +151,25 @@ export function resolvePropertyAccessors(cssZone: string, _options: TranspileOpt
     if (s < slices.length - 1) {
       // Look at the NEXT slice to determine what brace opened it
       const nextSlice = slices[s + 1]!;
-      // If next slice is JS type, we crossed {{ (2 chars)
-      // If current slice is JS type and next is CSS, we crossed }} (2 chars)
-      // Otherwise single brace (1 char)
-      if (nextSlice.type === 'js' || (slices[s]!.type === 'js' && nextSlice.type === 'css')) {
-        pos += 2; // {{ or }}
-      } else {
-        pos += 1; // { or }
+      switch (nextSlice.openedBy) {
+        case '{{':
+        case '@{':
+          pos += 2; // {{ or @{ are 2 chars
+          break;
+        case '{':
+          pos += 1; // { is 1 char
+          break;
+        default:
+          // Closing brace - need to determine size from current slice's context
+          // If current was opened by {{ → closing is }} (2 chars)
+          // If current was opened by @{ → closing is } (1 char)
+          // If current was opened by { → closing is } (1 char)
+          const currentSlice = slices[s]!;
+          if (currentSlice.openedBy === '{{') {
+            pos += 2; // }}
+          } else {
+            pos += 1; // }
+          }
       }
     }
   }
@@ -249,17 +262,315 @@ export function resolveDollarVariables(cssZone: string, _options: TranspileOptio
 }
 
 // ============================================================================
-// STEP 5: EXPRESSION PROCESSING
+// STEP 5a: STYLE BLOCK TRANSLATION
 // ============================================================================
 
 /**
- * Step 5: Process expressions in CSS zone.
+ * Result from style block translation.
+ */
+export interface StyleBlockTranslationResult {
+  /** The translated text */
+  text: string;
+  /** Whether any $param variables were found in style blocks */
+  hasDollarVariables: boolean;
+}
+
+/**
+ * Translates @{ } style blocks to JS template literals.
+ *
+ * Story 5.1: Style Block Syntax
+ *
+ * @{ } is purely delimiter translation:
+ * - @{ → backtick (`)
+ * - } (matching @{) → backtick (`)
+ * - {{ }} inside @{ } → ${ } with __lassScriptExpression helper
+ * - $param inside @{ } → ${__lassScriptLookup(...)} for proper null/undefined handling
+ *
+ * This function handles brace matching to find the correct closing }.
+ * Nested braces (from object literals, ternaries, etc.) are tracked.
+ *
+ * Protected contexts (where @{ is NOT translated):
+ * - Inside string literals ("..." or '...')
+ * - Inside block comments
+ * - Note: url() is NOT protected - @{ inside url() IS translated
+ *
+ * @param text - JS code containing @{ } style blocks
+ * @returns Result with translated text and flag for $param usage
+ */
+export function translateStyleBlocks(text: string): StyleBlockTranslationResult {
+  if (!text || !text.includes('@{')) {
+    return { text, hasDollarVariables: false };
+  }
+
+  const state = createContextState();
+  let result = '';
+  let i = 0;
+  let hasDollarVars = false;
+
+  while (i < text.length) {
+    const char = text[i]!;
+    const nextChar = text[i + 1];
+
+    // Update context state for strings and block comments
+    const consumed = updateContextState(text, i, state);
+    if (consumed === 2) {
+      result += text.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+
+    // Skip string quote characters
+    if (char === '"' || char === "'") {
+      result += char;
+      i++;
+      continue;
+    }
+
+    // Skip if in protected context
+    if (isInProtectedContext(state)) {
+      result += char;
+      i++;
+      continue;
+    }
+
+    // Check for @{ style block opener
+    if (char === '@' && nextChar === '{') {
+      // Found style block - find matching }
+      const closeIndex = findStyleBlockClose(text, i + 2);
+
+      if (closeIndex === -1) {
+        // No matching } found - treat as literal text
+        result += '@{';
+        i += 2;
+        continue;
+      }
+
+      // Extract content between @{ and }
+      const content = text.slice(i + 2, closeIndex);
+
+      // Recursively translate any nested @{ } inside
+      const nestedResult = translateStyleBlocks(content);
+      if (nestedResult.hasDollarVariables) {
+        hasDollarVars = true;
+      }
+
+      // Translate $param to ${__lassScriptLookup(...)} inside the style block content
+      const dollarResult = translateDollarVariablesInStyleBlock(nestedResult.text);
+      if (dollarResult.hasDollarVariables) {
+        hasDollarVars = true;
+      }
+
+      // Translate {{ }} to ${__lassScriptExpression(...)} inside the style block content
+      const finalContent = translateMustacheToInterpolation(dollarResult.text);
+
+      // Output as template literal
+      result += '`' + finalContent + '`';
+      i = closeIndex + 1;
+      continue;
+    }
+
+    result += char;
+    i++;
+  }
+
+  return { text: result, hasDollarVariables: hasDollarVars };
+}
+
+/**
+ * Finds the matching closing } for a style block.
+ *
+ * Tracks brace depth to handle nested braces from:
+ * - Object literals: { key: value }
+ * - Ternary expressions: { ... } in conditionals
+ * - CSS blocks inside {{ }}
+ *
+ * But {{ and }} are treated specially - they don't affect brace depth.
+ *
+ * @param text - Full text to scan
+ * @param startIndex - Index right after @{ (first char of content)
+ * @returns Index of closing } or -1 if not found
+ */
+function findStyleBlockClose(text: string, startIndex: number): number {
+  const state = createContextState();
+  let braceDepth = 0;
+  let i = startIndex;
+
+  while (i < text.length) {
+    const char = text[i]!;
+    const nextChar = text[i + 1];
+
+    // Update context state for strings and block comments
+    const consumed = updateContextState(text, i, state);
+    if (consumed === 2) {
+      i += 2;
+      continue;
+    }
+
+    // Skip string quote characters
+    if (char === '"' || char === "'") {
+      i++;
+      continue;
+    }
+
+    // Skip if in protected context
+    if (isInProtectedContext(state)) {
+      i++;
+      continue;
+    }
+
+    // Handle {{ - don't count as single {
+    if (char === '{' && nextChar === '{') {
+      i += 2;
+      continue;
+    }
+
+    // Handle }} - don't count as single }
+    if (char === '}' && nextChar === '}') {
+      i += 2;
+      continue;
+    }
+
+    // Handle nested @{ - increase depth
+    if (char === '@' && nextChar === '{') {
+      braceDepth++;
+      i += 2;
+      continue;
+    }
+
+    // Single { increases depth
+    if (char === '{') {
+      braceDepth++;
+      i++;
+      continue;
+    }
+
+    // Single } decreases depth or closes style block
+    if (char === '}') {
+      if (braceDepth === 0) {
+        // This is our closing }
+        return i;
+      }
+      braceDepth--;
+      i++;
+      continue;
+    }
+
+    i++;
+  }
+
+  // No matching } found
+  return -1;
+}
+
+/**
+ * Translates {{ expr }} to ${__lassScriptExpression(expr)} inside style block content.
+ *
+ * This is applied after @{ } is translated to backticks, so any {{ }} inside
+ * becomes template literal interpolations with proper array/null handling.
+ *
+ * @param text - Content inside a style block
+ * @returns Text with {{ }} translated to ${__lassScriptExpression(...)}
+ */
+function translateMustacheToInterpolation(text: string): string {
+  let result = '';
+  let i = 0;
+
+  while (i < text.length) {
+    // Check for {{
+    if (text[i] === '{' && text[i + 1] === '{') {
+      // Find matching }}
+      let depth = 0;
+      let j = i + 2;
+      while (j < text.length - 1) {
+        if (text[j] === '{') {
+          depth++;
+        } else if (text[j] === '}') {
+          if (depth === 0 && text[j + 1] === '}') {
+            // Found closing }}
+            break;
+          }
+          depth--;
+        }
+        j++;
+      }
+
+      if (j < text.length - 1 && text[j] === '}' && text[j + 1] === '}') {
+        // Extract expression and wrap with helper
+        const expr = text.slice(i + 2, j).trim();
+        result += '${__lassScriptExpression(' + expr + ')}';
+        i = j + 2;
+        continue;
+      }
+    }
+
+    result += text[i];
+    i++;
+  }
+
+  return result;
+}
+
+/**
+ * Result from dollar variable translation in style blocks.
+ */
+interface DollarTranslationResult {
+  text: string;
+  hasDollarVariables: boolean;
+}
+
+/**
+ * Translates $param variables to ${__lassScriptLookup(...)} inside style block content.
+ *
+ * Story 5.1: Inside @{ } style blocks, $param should use the same helper as
+ * CSS zone to properly handle:
+ * - null -> 'unset' (CSS-meaningful fallback)
+ * - undefined or ReferenceError -> preserve '$name' unchanged
+ * - other values -> String coercion
+ *
+ * Reuses Scanner.findDollarVariablesStatic() for detection, which handles:
+ * - Protected contexts (strings, block comments)
+ * - {{ }} script block depth tracking
+ *
+ * @param text - Content inside a style block
+ * @returns Result with text and flag for $param usage
+ */
+function translateDollarVariablesInStyleBlock(text: string): DollarTranslationResult {
+  // Reuse Scanner's detection logic - it handles all protected contexts and {{ }}
+  const variables = Scanner.findDollarVariablesStatic(text);
+
+  if (variables.length === 0) {
+    return { text, hasDollarVariables: false };
+  }
+
+  // Process from end to start so indices remain valid
+  let result = text;
+
+  for (let i = variables.length - 1; i >= 0; i--) {
+    const variable = variables[i]!;
+    const { varName, startIndex, endIndex } = variable;
+
+    // Replace $varName with ${__lassScriptLookup('name', () => $varName)}
+    const nameWithoutDollar = varName.slice(1);
+    const replacement = `\${__lassScriptLookup('${nameWithoutDollar}', () => ${varName})}`;
+    result = result.slice(0, startIndex) + replacement + result.slice(endIndex);
+  }
+
+  return { text: result, hasDollarVariables: true };
+}
+
+// ============================================================================
+// STEP 5b: EXPRESSION PROCESSING
+// ============================================================================
+
+/**
+ * Step 5b: Process expressions in CSS zone.
  *
  * Finds {{ expr }} expressions and converts them to template literal interpolations.
  * Story 2.5: Expressions are processed EVERYWHERE in CSS zone (strings, url(), comments).
+ * Story 5.1: Also translates @{ } style blocks within expressions.
  *
  * @param cssZone - The CSS zone content
- * @param hasDollarVariables - Whether $param variables were found (passed through)
+ * @param hasDollarVariables - Whether $param variables were found in CSS zone
  * @param options - Transpile options (filename for errors)
  * @returns Processed template with body and expression flag
  */
@@ -268,6 +579,7 @@ export function processExpressions(cssZone: string, hasDollarVariables: boolean,
   const exprSplit = scanner.findExpressions(cssZone);
 
   const hasExpressions = exprSplit.parts.length > 1;
+  let styleBlockHasDollarVars = false;
 
   // Build template literal content with ${} interpolations
   let templateBody = '';
@@ -276,12 +588,19 @@ export function processExpressions(cssZone: string, hasDollarVariables: boolean,
       // CSS chunk - escape for template literal
       templateBody += escapeForTemplateLiteral(exprSplit.parts[i]!);
     } else {
-      // JS expression - wrap in ${__lassScriptExpression(...)} for array/null handling
-      templateBody += '${__lassScriptExpression(' + exprSplit.parts[i] + ')}';
+      // JS expression - translate @{ } style blocks, then wrap in helper
+      const styleBlockResult = translateStyleBlocks(exprSplit.parts[i]!);
+      if (styleBlockResult.hasDollarVariables) {
+        styleBlockHasDollarVars = true;
+      }
+      templateBody += '${__lassScriptExpression(' + styleBlockResult.text + ')}';
     }
   }
 
-  return { templateBody, hasExpressions, hasDollarVariables };
+  // Include $param usage from both CSS zone and style blocks
+  const finalHasDollarVariables = hasDollarVariables || styleBlockHasDollarVars;
+
+  return { templateBody, hasExpressions, hasDollarVariables: finalHasDollarVariables };
 }
 
 // ============================================================================
@@ -292,18 +611,28 @@ export function processExpressions(cssZone: string, hasDollarVariables: boolean,
  * Step 6: Build final JavaScript module output.
  *
  * Assembles preamble, helper functions (if needed), and template literal export.
+ * Story 5.1: Also translates @{ } style blocks in preamble.
  *
  * @param zones - Detected zones from step 1
  * @param template - Processed template from step 5
  * @returns Final JavaScript module code
  */
 export function buildOutput(zones: DetectedZones, template: ProcessedTemplate): string {
+  // Translate @{ } style blocks in preamble (Story 5.1)
+  let preambleHasDollarVars = false;
+  let translatedPreamble = zones.preamble;
+  if (zones.hasSeparator && zones.preamble.trim()) {
+    const preambleResult = translateStyleBlocks(zones.preamble);
+    translatedPreamble = preambleResult.text;
+    preambleHasDollarVars = preambleResult.hasDollarVariables;
+  }
+
   // Include helper functions as needed
   let helpers = '';
   if (template.hasExpressions) {
     helpers += LASS_SCRIPT_EXPRESSION_HELPER + '\n';
   }
-  if (template.hasDollarVariables) {
+  if (template.hasDollarVariables || preambleHasDollarVars) {
     helpers += LASS_SCRIPT_LOOKUP_HELPER + '\n';
   }
   if (helpers) {
@@ -314,7 +643,7 @@ export function buildOutput(zones: DetectedZones, template: ProcessedTemplate): 
   if (zones.hasSeparator && zones.preamble.trim()) {
     // Helpers (if needed) + Preamble + blank line + export
     // Preamble executes when module is imported, variables are in scope
-    return `${helpers}${zones.preamble}\n\nexport default \`${template.templateBody}\`;`;
+    return `${helpers}${translatedPreamble}\n\nexport default \`${template.templateBody}\`;`;
   } else {
     // No separator or empty/whitespace-only preamble - just export (with helpers if needed)
     return `${helpers}export default \`${template.templateBody}\`;`;
