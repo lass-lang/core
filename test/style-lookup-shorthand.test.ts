@@ -3,20 +3,13 @@
  *
  * Tests the findStyleLookupShorthands() method that detects @prop patterns
  * in CSS value position and the transpiler integration for @prop → @(prop) normalization.
+ *
+ * NOTE: Lass→CSS behavior tests are in style-lookup-shorthand.common.md and
+ * style-lookup-shorthand.extra-cases.md axioms. These tests cover scanner detection only.
  */
 
 import { describe, it, expect } from 'vitest';
 import { Scanner } from '../src/scanner.js';
-import { transpile } from '../src/index.js';
-
-/**
- * Executes transpiled Lass code and returns the CSS output.
- */
-async function executeTranspiledCode(code: string): Promise<string> {
-  const dataUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(code)}`;
-  const module = await import(dataUrl);
-  return module.default;
-}
 
 describe('Scanner.findStyleLookupShorthands()', () => {
   describe('AC1: Basic @prop detection', () => {
@@ -220,120 +213,12 @@ describe('Scanner.findStyleLookupShorthands()', () => {
   });
 });
 
-describe('Transpiler @prop integration', () => {
-  describe('AC7: Transpiled output (same as @(prop))', () => {
-    it('should resolve @prop to property value', async () => {
-      const source = `.box {
-  border: 1px solid blue;
-  border-left: @border;
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
+describe('Transpiler @prop integration - Scanner', () => {
+  // NOTE: Lass→CSS behavior tests are in style-lookup-shorthand.common.md and
+  // style-lookup-shorthand.extra-cases.md axioms.
+  // These tests cover scanner detection for @{ } context edge cases.
 
-      expect(css).toContain('border-left: 1px solid blue;');
-    });
-
-    it('should resolve @border-color (hyphenated property)', async () => {
-      const source = `.box {
-  border-color: red;
-  outline-color: @border-color;
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toContain('outline-color: red;');
-    });
-
-    it('should preserve @prop when property not found', async () => {
-      const source = `.box {
-  color: @missing;
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toContain('color: @(missing);');
-    });
-
-    it('should NOT resolve @--custom (use explicit @(--custom))', async () => {
-      const source = `.box {
-  --accent: blue;
-  color: @--custom;
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
-
-      // @--custom is NOT detected, remains unchanged
-      expect(css).toContain('color: @--custom;');
-    });
-
-    it('should resolve explicit @(--custom) form', async () => {
-      const source = `.box {
-  --accent: blue;
-  color: @(--accent);
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toContain('color: blue;');
-    });
-  });
-
-  describe('AC6: Scope resolution (same as @(prop))', () => {
-    it('should resolve from parent scope', async () => {
-      const source = `.parent {
-  color: red;
-  .child {
-    background: @color;
-  }
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toContain('background: red;');
-    });
-
-    it('should NOT resolve from sibling scope', async () => {
-      const source = `.sibling1 {
-  color: red;
-}
-.sibling2 {
-  background: @color;
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
-
-      // Sibling's color is not accessible, @color preserved as @(color)
-      expect(css).toContain('background: @(color);');
-    });
-  });
-
-  describe('Mixed usage', () => {
-    it('should work with $param in same declaration', async () => {
-      const source = `const $gap = '8px';
----
-.box {
-  border: 1px solid;
-  border-left: @border;
-  padding: $gap;
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toContain('border-left: 1px solid;');
-      expect(css).toContain('padding: 8px;');
-    });
-
-    it('should preserve @prop inside {{ }} (not detected as shorthand)', async () => {
-      const source = `.box {
-  color: {{ '@border' }};
-}`;
-      const { code } = transpile(source);
-      const css = await executeTranspiledCode(code);
-
-      // @border in string inside {{ }} is preserved as-is
-      expect(css).toContain("color: @border;");
-    });
-
+  describe('@{ } context edge cases - scanner detection', () => {
     it('should detect @prop inside @{ } within {{ }}', () => {
       // Tests the context stack: {{ pushes js, @{ pushes css inside js
       // @prop shorthand IS detected in @{ } css context

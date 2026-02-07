@@ -173,6 +173,9 @@ p { margin: 10px; }`;
   });
 
   describe('expression interpolation (Story 2.3)', () => {
+    // NOTE: lass→css behavior tests are in mustache-expression.common.md axioms.
+    // These tests verify internal implementation details only.
+
     it('should wrap expressions in __lassScriptExpression helper (Story 2.4)', () => {
       const { code } = transpile('const color = "blue"\n---\n.box { color: {{ color }}; }');
 
@@ -193,103 +196,6 @@ p { margin: 10px; }`;
       // Should not contain {{ }}
       expect(code).not.toContain('{{');
       expect(code).not.toContain('}}');
-    });
-
-    it('should evaluate expression and output result', async () => {
-      const { code } = transpile('const color = "blue"\n---\n.box { color: {{ color }}; }');
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.box { color: blue; }');
-    });
-
-    it('should handle arithmetic expression', async () => {
-      const { code } = transpile('const gap = 23\n---\n.box { padding: {{ gap * 2 }}px; }');
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.box { padding: 46px; }');
-    });
-
-    it('should handle ternary expression', async () => {
-      const { code } = transpile(
-        'const darkMode = true\n---\nbody { background: {{ darkMode ? "#1a1a1a" : "#ffffff" }}; }'
-      );
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('body { background: #1a1a1a; }');
-    });
-
-    it('should handle function call expression', async () => {
-      const { code } = transpile(
-        "function px(n) { return n + 'px' }\n---\n.box { margin: {{ px(16) }}; }"
-      );
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.box { margin: 16px; }');
-    });
-
-    it('should handle string literal expression', async () => {
-      const { code } = transpile('---\n.error { color: {{ "red" }}; }');
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.error { color: red; }');
-    });
-
-    it('should handle multiple expressions in one declaration', async () => {
-      const { code } = transpile(
-        'const top = 10\nconst right = 20\n---\n.box { margin: {{ top }}px {{ right }}px; }'
-      );
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.box { margin: 10px 20px; }');
-    });
-
-    it('should handle expression in selector position', async () => {
-      const { code } = transpile("const tag = 'article'\n---\n{{ tag }} { display: block; }");
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('article { display: block; }');
-    });
-
-    it('should handle expression in property name position', async () => {
-      const { code } = transpile(
-        "const prop = 'background-color'\n---\n.box { {{ prop }}: blue; }"
-      );
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.box { background-color: blue; }');
-    });
-
-    it('should handle nested object access', async () => {
-      const { code } = transpile(
-        "const theme = { colors: { primary: '#3b82f6' } }\n---\n.button { background: {{ theme.colors.primary }}; }"
-      );
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.button { background: #3b82f6; }');
-    });
-
-    it('should handle object literal in expression', async () => {
-      const { code } = transpile(
-        "const getStyle = (opts) => opts.value\n---\n.box { width: {{ getStyle({ value: '100px' }) }}; }"
-      );
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.box { width: 100px; }');
-    });
-
-    it('should handle CSS without expressions unchanged', async () => {
-      const { code } = transpile('const x = 1\n---\n.box { color: red; }');
-      const css = await executeTranspiledCode(code);
-
-      expect(css).toBe('.box { color: red; }');
-    });
-
-    it('should throw for empty expression', () => {
-      expect(() => transpile('---\np { color: {{ }}; }')).toThrow('Empty {{ }} expression');
-    });
-
-    it('should throw for unclosed expression', () => {
-      expect(() => transpile('---\np { color: {{ color; }')).toThrow('Unclosed {{ expression');
     });
   });
 });
