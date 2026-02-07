@@ -44,6 +44,19 @@ export interface ExpressionSplit {
 }
 
 /**
+ * Information about a detected @prop accessor.
+ * Story 3.2: Basic Property Lookup
+ */
+export interface PropertyAccessor {
+  /** The property name (without @) */
+  propName: string;
+  /** Start index of @propname in the CSS string */
+  startIndex: number;
+  /** End index (exclusive) of @propname in the CSS string */
+  endIndex: number;
+}
+
+/**
  * Scanner options for customizing scan behavior.
  */
 export interface ScanOptions {
@@ -336,5 +349,130 @@ export class Scanner {
       col++;
     }
     return col;
+  }
+
+  /**
+   * Known CSS at-rules that should NOT be detected as @prop accessors.
+   * These appear at statement position (start of line/after semicolon).
+   */
+  private static readonly CSS_AT_RULES = new Set([
+    'media',
+    'layer',
+    'supports',
+    'container',
+    'keyframes',
+    'font-face',
+    'import',
+    'charset',
+    'namespace',
+    'page',
+    'counter-style',
+    'font-feature-values',
+    'property',
+    'scope',
+    'starting-style',
+  ]);
+
+  /**
+   * Finds @prop accessors in CSS zone.
+   *
+   * Story 3.2: Basic Property Lookup
+   *
+   * Detection rules:
+   * - @propname in CSS value position (after :) is a Lass accessor
+   * - @propname at statement position (start of line, after ; or {) is a CSS at-rule
+   * - Known CSS at-rules (@media, @layer, etc.) are never Lass accessors
+   *
+   * Valid CSS property names:
+   * - Start with letter (a-z, A-Z) or hyphen (vendor prefixes like -webkit-)
+   * - Followed by letters, digits, hyphens
+   *
+   * @param cssZone - The CSS zone content to scan
+   * @returns Array of PropertyAccessor objects with propName and indices
+   */
+  findPropertyAccessors(cssZone: string): PropertyAccessor[] {
+    return Scanner.findPropertyAccessorsStatic(cssZone);
+  }
+
+  /**
+   * Static version of findPropertyAccessors for use without Scanner instantiation.
+   * Used internally by transpiler to avoid creating unnecessary Scanner instances.
+   *
+   * @param cssZone - The CSS zone content to scan
+   * @returns Array of PropertyAccessor objects with propName and indices
+   */
+  static findPropertyAccessorsStatic(cssZone: string): PropertyAccessor[] {
+    const accessors: PropertyAccessor[] = [];
+
+    if (!cssZone) {
+      return accessors;
+    }
+
+    // Pattern: @ followed by valid CSS property name characters
+    // Property names: start with letter or hyphen, then letters/digits/hyphens
+    const propNamePattern = /[a-zA-Z-][a-zA-Z0-9-]*/;
+
+    // Track if we're in value position (after :)
+    let inValuePosition = false;
+    let i = 0;
+
+    while (i < cssZone.length) {
+      const char = cssZone[i];
+
+      // Track colon for value position
+      if (char === ':') {
+        inValuePosition = true;
+        i++;
+        continue;
+      }
+
+      // Reset on semicolon or closing brace (end of declaration)
+      if (char === ';' || char === '}') {
+        inValuePosition = false;
+        i++;
+        continue;
+      }
+
+      // Reset on opening brace (entering a new block)
+      if (char === '{') {
+        inValuePosition = false;
+        i++;
+        continue;
+      }
+
+      // Check for @ symbol
+      if (char === '@') {
+        // Extract the potential property name after @
+        const remaining = cssZone.slice(i + 1);
+        const match = remaining.match(propNamePattern);
+
+        if (match && match.index === 0) {
+          const propName = match[0];
+
+          // Skip if it's a known CSS at-rule
+          if (Scanner.CSS_AT_RULES.has(propName.toLowerCase())) {
+            i++;
+            continue;
+          }
+
+          // Only detect if we're in value position (after :)
+          if (inValuePosition) {
+            accessors.push({
+              propName,
+              startIndex: i,
+              endIndex: i + 1 + propName.length,
+            });
+          }
+
+          // Move past the @propname
+          i += 1 + propName.length;
+          continue;
+        }
+      }
+
+      i++;
+    }
+
+    return accessors;
   }
 }

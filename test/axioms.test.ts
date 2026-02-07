@@ -83,7 +83,8 @@ for (const axiom of axioms) {
     if (validCases.length > 0) {
       describe('valid cases', () => {
         for (const testCase of validCases) {
-          if (shouldSkip) {
+          // Skip if feature is not implemented OR if individual test is marked [skip]
+          if (shouldSkip || testCase.skip) {
             test.skip(testCase.name, async () => {
               await runValidTestCase(testCase);
             });
@@ -99,7 +100,8 @@ for (const axiom of axioms) {
     if (invalidCases.length > 0) {
       describe('invalid cases', () => {
         for (const testCase of invalidCases) {
-          if (shouldSkip) {
+          // Skip if feature is not implemented OR if individual test is marked [skip]
+          if (shouldSkip || testCase.skip) {
             test.skip(testCase.name, async () => {
               await runInvalidTestCase(testCase);
             });
