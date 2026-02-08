@@ -2,6 +2,7 @@
   "name": "@lass-lang/core",
   "version": "0.0.1",
   "description": "Lass language transpiler core",
+  "author": "Long-lazuli",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,7 +13,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -28,8 +30,16 @@
   "keywords": [
     "lass",
     "css",
-    "transpiler"
+    "transpiler",
+    "preprocessor",
+    "js-in-css",
+    "styling",
+    "build-tool",
+    "template-literals"
   ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
