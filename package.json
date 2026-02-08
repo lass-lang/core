@@ -21,6 +21,7 @@
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "pnpm build && changeset publish"
