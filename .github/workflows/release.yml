@@ -3,6 +3,16 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Pre-release type'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - beta
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,6 +27,8 @@ jobs:
       id-token: write  # Required for npm Trusted Publishing (OIDC)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for version calculation
       
       - uses: pnpm/action-setup@v4
         with:
@@ -32,7 +44,9 @@ jobs:
       - run: pnpm build
       - run: pnpm test
       
+      # Stable release (automatic on main)
       - name: Create Release Pull Request or Publish
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: changesets/action@v1
         with:
           publish: pnpm release
@@ -41,4 +55,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Uses npm Trusted Publishing (OIDC) - no NPM_TOKEN needed
-          # Configure trusted publisher at: https://www.npmjs.com/package/@lass-lang/core/access
+      
+      # Beta pre-release (manual trigger)
+      - name: Publish Beta Release
+        if: github.event_name == 'workflow_dispatch' && inputs.prerelease == 'beta'
+        run: |
+          # Get current version from package.json
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          
+          # Get next beta number by checking npm registry
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          EXISTING_BETAS=$(npm view "$PACKAGE_NAME" versions --json 2>/dev/null | grep -o "\"${CURRENT_VERSION}-beta\.[0-9]*\"" | wc -l || echo "0")
+          NEXT_BETA=$((EXISTING_BETAS + 1))
+          
+          # Calculate beta version
+          BETA_VERSION="${CURRENT_VERSION}-beta.${NEXT_BETA}"
+          
+          echo "Publishing beta version: $BETA_VERSION"
+          
+          # Update package.json version temporarily
+          npm version "$BETA_VERSION" --no-git-tag-version
+          
+          # Publish with beta tag
+          pnpm publish --tag beta --access public --no-git-checks
+          
+          echo "Published $PACKAGE_NAME@$BETA_VERSION with tag 'beta'"
