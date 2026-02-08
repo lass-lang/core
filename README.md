@@ -76,6 +76,18 @@ The Lass transpiler supports the full language feature set:
 - **Style blocks** - `@{ }` to embed CSS fragments generated from JavaScript
 - **Comment stripping** - `//` single-line comments are removed from output
 
+## TypeScript Support
+
+For TypeScript projects using `.lass` files, add type declarations:
+
+```typescript
+// lass.d.ts
+declare module '*.lass' {
+  const css: string;
+  export default css;
+}
+```
+
 ## License
 
 MIT
