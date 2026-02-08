@@ -20,9 +20,13 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.29.8",
     "@lass-lang/axioms": "^0.0.1",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
