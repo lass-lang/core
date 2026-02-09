@@ -1,12 +1,12 @@
 /**
  * Axiom-based tests for @lass-lang/core transpiler.
  *
- * This file dynamically generates tests from axiom files in @lass-lang/axioms.
+ * This file dynamically generates tests from axiom files in @lass-lang/docs.
  * Axioms are markdown files (.common.md, .extra-cases.md) that define input/output
  * pairs for the transpiler.
  *
  * Test execution flow:
- * 1. Read all .md files from @lass-lang/axioms/files/
+ * 1. Read all .md files from @lass-lang/docs/content/axioms/
  * 2. Extract test cases using extractTestCasesFromMD
  * 3. For valid cases: transpile input, execute JS, compare CSS output
  * 4. For invalid cases: verify transpile/execute throws matching error
@@ -16,13 +16,13 @@ import { describe, test, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractTestCasesFromMD, type TestCase } from '@lass-lang/axioms';
+import { extractTestCasesFromMD, type TestCase } from '@lass-lang/docs';
 import { transpile } from '../src/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Path to axioms files directory
-const axiomsDir = join(__dirname, '..', '..', 'lass-axioms', 'files');
+// Path to axioms files directory (in @lass-lang/docs)
+const axiomsDir = join(__dirname, '..', '..', '..', 'apps', 'lass-docs', 'content', 'axioms');
 
 /**
  * Executes transpiled Lass code and returns the CSS output.
