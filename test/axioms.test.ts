@@ -6,15 +6,23 @@
  * pairs for the transpiler.
  *
  * Test execution flow:
- * 1. Load all axioms from @lass-lang/axioms
- * 2. For each axiom, generate describe block per feature
+ * 1. Read all .md files from @lass-lang/axioms/files/
+ * 2. Extract test cases using extractTestCasesFromMD
  * 3. For valid cases: transpile input, execute JS, compare CSS output
  * 4. For invalid cases: verify transpile/execute throws matching error
  */
 
 import { describe, test, expect } from 'vitest';
-import { loadAllAxioms, type AxiomFile, type TestCase } from '@lass-lang/axioms';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { extractTestCasesFromMD, type TestCase } from '@lass-lang/axioms';
 import { transpile } from '../src/index.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Path to axioms files directory
+const axiomsDir = join(__dirname, '..', '..', 'lass-axioms', 'files');
 
 /**
  * Executes transpiled Lass code and returns the CSS output.
@@ -37,61 +45,71 @@ async function executeTranspiledCode(code: string): Promise<string> {
 /**
  * Run a valid test case: transpile, execute, and compare output.
  */
-async function runValidTestCase(testCase: TestCase): Promise<void> {
+async function runValidTestCase(testCase: TestCase): Promise<string> {
   const { code } = transpile(testCase.input);
-  const output = await executeTranspiledCode(code);
-  expect(output).toBe(testCase.expected);
+  const result = await executeTranspiledCode(code);
+  expect(result).toBe(testCase.output);
+  return result;
 }
 
 /**
  * Run an invalid test case: verify that transpile/execute throws.
  */
 async function runInvalidTestCase(testCase: TestCase): Promise<void> {
-  // For invalid cases, we expect either transpile or execution to throw
-  // The expected field contains the error message substring
   try {
     const { code } = transpile(testCase.input);
     await executeTranspiledCode(code);
-    // If we get here, no error was thrown
-    expect.fail(`Expected error containing "${testCase.expected}" but no error was thrown`);
+    expect.fail(`Expected error containing "${testCase.output}" but no error was thrown`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    expect(errorMessage).toContain(testCase.expected);
+    expect(errorMessage).toContain(testCase.output);
   }
 }
 
-// Load all axioms
-const axioms = loadAllAxioms();
+/**
+ * Parse frontmatter to get metadata (for skipping not-implemented features)
+ */
+function parseMetadataStatus(content: string): string | undefined {
+  const statusMatch = content.match(/^status:\s*(\S+)$/m);
+  return statusMatch?.[1];
+}
 
-// Generate tests dynamically from axioms
-for (const axiom of axioms) {
-  // Skip axioms that are not yet implemented or require Vite plugin context
-  // - not-implemented: Feature not started
-  // - in-progress: Feature infrastructure exists but not integrated (e.g., Story 3.1)
-  // - deferred: Feature removed from scope or deferred to later phase
-  // - vite-only: Requires Vite plugin context
-  const status = axiom.metadata.status as string;
-  const shouldSkip = 
-    status === 'not-implemented' || 
+// Load axiom files and generate tests
+const axiomFiles = readdirSync(axiomsDir)
+  .filter((f) => f.endsWith('.common.md') || f.endsWith('.extra-cases.md'))
+  .sort();
+
+for (const fileName of axiomFiles) {
+  const filePath = join(axiomsDir, fileName);
+  const content = readFileSync(filePath, 'utf-8');
+  const testCases = extractTestCasesFromMD(content, fileName);
+
+  if (testCases.length === 0) continue;
+
+  // Check if feature is not implemented
+  const status = parseMetadataStatus(content);
+  const shouldSkip =
+    status === 'not-implemented' ||
     status === 'in-progress' ||
     status === 'deferred' ||
     status === 'vite-only';
 
-  describe(axiom.feature, () => {
-    // Group by outcome
-    const validCases = axiom.testCases.filter((tc) => tc.outcome === 'valid');
-    const invalidCases = axiom.testCases.filter((tc) => tc.outcome === 'invalid');
+  // Use filename without extension as feature name
+  const featureName = fileName.replace(/\.(common|extra-cases)\.md$/, '');
+
+  describe(featureName, () => {
+    const validCases = testCases.filter((tc) => tc.outcome === 'valid');
+    const invalidCases = testCases.filter((tc) => tc.outcome === 'invalid');
 
     if (validCases.length > 0) {
       describe('valid cases', () => {
         for (const testCase of validCases) {
-          // Skip if feature is not implemented OR if individual test is marked [skip]
           if (shouldSkip || testCase.skip) {
-            test.skip(testCase.name, async () => {
+            test.skip(testCase.description, async () => {
               await runValidTestCase(testCase);
             });
           } else {
-            test(testCase.name, async () => {
+            test(testCase.description, async () => {
               await runValidTestCase(testCase);
             });
           }
@@ -102,13 +120,12 @@ for (const axiom of axioms) {
     if (invalidCases.length > 0) {
       describe('invalid cases', () => {
         for (const testCase of invalidCases) {
-          // Skip if feature is not implemented OR if individual test is marked [skip]
           if (shouldSkip || testCase.skip) {
-            test.skip(testCase.name, async () => {
+            test.skip(testCase.description, async () => {
               await runInvalidTestCase(testCase);
             });
           } else {
-            test(testCase.name, async () => {
+            test(testCase.description, async () => {
               await runInvalidTestCase(testCase);
             });
           }
