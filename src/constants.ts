@@ -13,11 +13,11 @@
  * - null/undefined/false -> '' (React-style silent handling)
  * - arrays -> recursively flattened, filtered, stringified, then joined
  *   - If any element contains newline, join with newline (multi-line blocks)
- *   - Otherwise join with empty string (inline values)
+ *   - Otherwise join with space (CSS-friendly: padding, margin, etc.)
  * - other values -> String coercion
  * - Multi-line strings are re-indented using the optional indent parameter
  */
-export const LASS_SCRIPT_EXPRESSION_HELPER = `const __lassScriptExpression = (v, indent = '') => { if (v == null || v === false) return ''; if (Array.isArray(v)) { const a = v.flat(Infinity).map(x => (x == null || x === false) ? '' : String(x)).filter(x => x); const sep = a.some(x => x.includes('\\n')) ? '\\n' : ''; return a.join(sep); } const s = String(v); if (!indent || !s.includes('\\n')) return s; return s.split('\\n').map((l, i) => i === 0 ? l : indent + l).join('\\n'); };`;
+export const LASS_SCRIPT_EXPRESSION_HELPER = `const __lassScriptExpression = (v, indent = '') => { if (v == null || v === false) return ''; if (Array.isArray(v)) { const a = v.flat(Infinity).map(x => (x == null || x === false) ? '' : String(x)).filter(x => x); const sep = a.some(x => x.includes('\\n')) ? '\\n' : ' '; return a.join(sep); } const s = String(v); if (!indent || !s.includes('\\n')) return s; return s.split('\\n').map((l, i) => i === 0 ? l : indent + l).join('\\n'); };`;
 
 /**
  * Runtime helper function for $param variable substitution.
