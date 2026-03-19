@@ -74,6 +74,77 @@ describe('Scanner', () => {
       });
     });
 
+    describe('separator with comment (Story 8.1)', () => {
+      it('should recognize --- with comment after space', () => {
+        const scanner = new Scanner('const x = 1\n--- here starts CSS\np { color: red; }');
+        const zones = scanner.findSeparator();
+
+        expect(zones.hasSeparator).toBe(true);
+        expect(zones.preamble).toBe('const x = 1');
+        expect(zones.cssZone).toBe('p { color: red; }');
+      });
+
+      it('should recognize --- with comment and no preamble', () => {
+        const scanner = new Scanner('--- just the reset\np { color: red; }');
+        const zones = scanner.findSeparator();
+
+        expect(zones.hasSeparator).toBe(true);
+        expect(zones.preamble).toBe('');
+        expect(zones.cssZone).toBe('p { color: red; }');
+      });
+
+      it('should recognize --- with tab before comment', () => {
+        const scanner = new Scanner('const x = 1\n---\tcomment\np { color: red; }');
+        const zones = scanner.findSeparator();
+
+        expect(zones.hasSeparator).toBe(true);
+        expect(zones.preamble).toBe('const x = 1');
+        expect(zones.cssZone).toBe('p { color: red; }');
+      });
+
+      it('should NOT recognize ---nospace as separator', () => {
+        const scanner = new Scanner('---nospace\np { color: red; }');
+        const zones = scanner.findSeparator();
+
+        expect(zones.hasSeparator).toBe(false);
+        expect(zones.cssZone).toBe('---nospace\np { color: red; }');
+      });
+
+      it('should NOT recognize ---word as separator (no space)', () => {
+        const scanner = new Scanner('const x = 1\n---word\np { color: red; }');
+        const zones = scanner.findSeparator();
+
+        expect(zones.hasSeparator).toBe(false);
+        expect(zones.cssZone).toBe('const x = 1\n---word\np { color: red; }');
+      });
+
+      it('should still recognize bare --- (backward compatible)', () => {
+        const scanner = new Scanner('const x = 1\n---\np { color: red; }');
+        const zones = scanner.findSeparator();
+
+        expect(zones.hasSeparator).toBe(true);
+        expect(zones.preamble).toBe('const x = 1');
+        expect(zones.cssZone).toBe('p { color: red; }');
+      });
+
+      it('should not include comment text in either zone', () => {
+        const scanner = new Scanner('const x = 1\n--- this comment is discarded\np { color: red; }');
+        const zones = scanner.findSeparator();
+
+        expect(zones.preamble).not.toContain('this comment is discarded');
+        expect(zones.cssZone).not.toContain('this comment is discarded');
+      });
+
+      it('should handle --- comment at EOF with no CSS below', () => {
+        const scanner = new Scanner('const x = 1\n--- end of preamble');
+        const zones = scanner.findSeparator();
+
+        expect(zones.hasSeparator).toBe(true);
+        expect(zones.preamble).toBe('const x = 1');
+        expect(zones.cssZone).toBe('');
+      });
+    });
+
     describe('edge cases - non-separators', () => {
       it('should ignore --- with leading whitespace (not a separator)', () => {
         const scanner = new Scanner('  ---\np { color: red; }');

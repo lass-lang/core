@@ -120,6 +120,8 @@ export class Scanner {
    * Rules:
    * - Separator must be exactly "---" at column 0 (start of line)
    * - May have trailing whitespace
+   * - May have an optional comment after any whitespace char (e.g., "--- comment text", "---\tcomment")
+   * - "---nospace" (no whitespace after dashes) is NOT a separator
    * - Must NOT be inside a multi-line comment (slash-star ... star-slash)
    * - Only one separator allowed per file
    *
@@ -177,12 +179,19 @@ export class Scanner {
 
   /**
    * Checks if a line is the --- separator.
-   * Must be exactly "---" with optional trailing whitespace.
+   * Must be exactly "---" with optional trailing whitespace or comment.
+   *
+   * Story 8.1: Separator Comment Support
+   * - "---"           (bare separator)
+   * - "--- comment"   (separator with whitespace then comment text)
+   * - "---\tcomment"  (tab also accepted — any whitespace char starts the comment)
+   * - "---nospace"    does NOT match (no whitespace — avoids confusion with CSS --custom)
    */
   private isSeparatorLine(line: string): boolean {
-    // Must start with exactly "---" (no leading whitespace)
-    // May have trailing whitespace
-    return /^---\s*$/.test(line);
+    // ^---      line must start with exactly three dashes
+    // (\s.*)?$  optionally followed by a whitespace char then anything (the comment)
+    //           bare "---" matches when the group is absent
+    return /^---(\s.*)?$/.test(line);
   }
 
   /**
