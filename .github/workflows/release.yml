@@ -30,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0  # Needed for version calculation
       
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
           
