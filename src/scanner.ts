@@ -72,19 +72,6 @@ export interface DollarVariable {
 }
 
 /**
- * Information about a detected @prop shorthand.
- * Story 4.2: Style Lookup Shorthand
- */
-export interface StyleLookupShorthand {
-  /** The property name (without @ prefix) */
-  propName: string;
-  /** Start index of @propname in the CSS string */
-  startIndex: number;
-  /** End index (exclusive) of @propname in the CSS string */
-  endIndex: number;
-}
-
-/**
  * Scanner options for customizing scan behavior.
  */
 export interface ScanOptions {
@@ -113,52 +100,40 @@ export class Scanner {
   }
 
   /**
-   * Finds the --- separator and splits source into preamble and CSS zones.
+   * Finds the --- delimiters and splits source into preamble and CSS zones.
    *
-   * Story 2.1: Zone detection
+   * Story 2.1: Zone detection (updated Story 10.1: Preamble Format Change)
    *
-   * Rules:
-   * - Separator must be exactly "---" at column 0 (start of line)
-   * - May have trailing whitespace
-   * - May have an optional comment after any whitespace char (e.g., "--- comment text", "---\tcomment")
-   * - "---nospace" (no whitespace after dashes) is NOT a separator
-   * - Must NOT be inside a multi-line comment (slash-star ... star-slash)
-   * - Only one separator allowed per file
+   * Rules for surrounding delimiters:
+   * - Opening delimiter must be on line 0 (first line of file)
+   * - Delimiter must be exactly "---" at column 0 (start of line)
+   * - May have extra dashes: "------"
+   * - May have optional comment after space: "--- comment text"
+   * - "---nospace" is NOT a delimiter (no space before text, not extra dashes)
+   * - Second delimiter closes the preamble
+   * - Must NOT be inside a multi-line comment in CSS zone
+   *
+   * Format:
+   * ```
+   * --- optional comment
+   * JS preamble code
+   * --- optional comment
+   * CSS zone
+   * ```
    *
    * Note: Line endings are normalized to \n during processing.
-   * When no separator is found, cssZone returns the original source unchanged.
+   * When no opening delimiter is found on line 0, cssZone returns the original source unchanged.
    *
    * @returns Zone split result with preamble, cssZone, and hasSeparator
-   * @throws LassTranspileError if multiple separators found
    */
   findSeparator(): ZoneSplit {
     // Normalize line endings to \n for consistent processing
     const normalized = this.source.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const lines = normalized.split('\n');
 
-    let separatorLineIndex = -1;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-
-      // Check if this line is the separator (only if not inside a block comment)
-      if (!this.isInBlockComment(lines, i) && this.isSeparatorLine(line)) {
-        if (separatorLineIndex !== -1) {
-          // Multiple separators found
-          throw LassTranspileError.at(
-            'Multiple --- separators found. Only one is allowed per file.',
-            ErrorCategory.SCAN,
-            i + 1,
-            1,
-            this.getOffset(lines, i)
-          );
-        }
-        separatorLineIndex = i;
-      }
-    }
-
-    if (separatorLineIndex === -1) {
-      // No separator - entire file is CSS zone
+    // Check if line 0 is the opening delimiter
+    if (lines.length === 0 || !this.isSeparatorLine(lines[0]!)) {
+      // No opening delimiter on line 0 - entire file is CSS zone
       return {
         preamble: '',
         cssZone: this.source,
@@ -166,9 +141,34 @@ export class Scanner {
       };
     }
 
-    // Split at separator
-    const preambleLines = lines.slice(0, separatorLineIndex);
-    const cssLines = lines.slice(separatorLineIndex + 1);
+    // Opening delimiter found on line 0. Find the closing delimiter.
+    let closingLineIndex = -1;
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i]!;
+
+      // Check if this line is the closing delimiter (only if not inside a block comment)
+      // Note: We only check for comments in what will become the CSS zone (after closing)
+      // The preamble is JS, so we don't apply CSS comment logic there
+      if (this.isSeparatorLine(line)) {
+        closingLineIndex = i;
+        break; // First delimiter after opening is the closing delimiter
+      }
+    }
+
+    if (closingLineIndex === -1) {
+      // No closing delimiter - entire file after line 0 is JS preamble, empty CSS zone
+      const preambleLines = lines.slice(1);
+      return {
+        preamble: preambleLines.join('\n'),
+        cssZone: '',
+        hasSeparator: true,
+      };
+    }
+
+    // Split at delimiters
+    const preambleLines = lines.slice(1, closingLineIndex);
+    const cssLines = lines.slice(closingLineIndex + 1);
 
     return {
       preamble: preambleLines.join('\n'),
@@ -178,20 +178,29 @@ export class Scanner {
   }
 
   /**
-   * Checks if a line is the --- separator.
-   * Must be exactly "---" with optional trailing whitespace or comment.
+   * Checks if a line is the --- delimiter.
+   * Must be exactly "---" with optional extra dashes or comment.
    *
    * Story 8.1: Separator Comment Support
-   * - "---"           (bare separator)
-   * - "--- comment"   (separator with whitespace then comment text)
-   * - "---\tcomment"  (tab also accepted — any whitespace char starts the comment)
-   * - "---nospace"    does NOT match (no whitespace — avoids confusion with CSS --custom)
+   * Story 10.1: Preamble Format Change (updated regex)
+   * 
+   * Matches:
+   * - "---"              (bare three dashes)
+   * - "--- comment"      (three dashes + space + comment text)
+   * - "---\tcomment"     (three dashes + tab + comment text)
+   * - "------"           (three+ dashes for visual separator)
+   * - "--- title ---"    (decorative comment style)
+   * 
+   * Does NOT match:
+   * - "---nospace"       (no whitespace before text, not extra dashes)
+   * - " ---"             (leading whitespace)
+   * - "--"               (only two dashes)
    */
   private isSeparatorLine(line: string): boolean {
-    // ^---      line must start with exactly three dashes
-    // (\s.*)?$  optionally followed by a whitespace char then anything (the comment)
-    //           bare "---" matches when the group is absent
-    return /^---(\s.*)?$/.test(line);
+    // ^---         line must start with exactly three dashes
+    // (\s.*|-*)    followed by either: whitespace + anything (comment), OR more dashes
+    // $            end of line
+    return /^---(\s.*|-*)$/.test(line);
   }
 
   /**
@@ -684,214 +693,6 @@ export class Scanner {
   }
 
   /**
-   * Finds @prop shorthand accessors in CSS zone.
-   *
-   * Story 4.2: Style Lookup Shorthand
-   *
-   * Detection rules:
-   * - @prop in CSS value position (after :) is a Lass shorthand accessor
-   * - @prop shorthand only works when identifier starts with a letter [a-zA-Z]
-   * - Identifier continues with letters, digits, hyphens, underscores
-   * - NOT detected inside {{ }} script blocks (use explicit @(prop) there)
-   * - NOT detected inside protected contexts: strings, comments, url()
-   *
-   * Examples:
-   * - @border → shorthand for @(border)
-   * - @border-color → shorthand for @(border-color)
-   * - @--custom → NOT detected (starts with hyphen, use @(--custom))
-   * - @-webkit-foo → NOT detected (starts with hyphen, use @(-webkit-foo))
-   *
-   * @param cssZone - The CSS zone content to scan
-   * @returns Array of StyleLookupShorthand objects with propName and indices
-   */
-  findStyleLookupShorthands(cssZone: string): StyleLookupShorthand[] {
-    return Scanner.findStyleLookupShorthandsStatic(cssZone);
-  }
-
-  /**
-   * Static version of findStyleLookupShorthands for use without Scanner instantiation.
-   * Used internally by transpiler to avoid creating unnecessary Scanner instances.
-   *
-   * Story 4.2: Style Lookup Shorthand
-   *
-   * @param cssZone - The CSS zone content to scan
-   * @returns Array of StyleLookupShorthand objects with propName and indices
-   */
-  static findStyleLookupShorthandsStatic(cssZone: string): StyleLookupShorthand[] {
-    const shorthands: StyleLookupShorthand[] = [];
-
-    if (!cssZone) {
-      return shorthands;
-    }
-
-    // Context tracking for protected zones (strings, comments)
-    // Note: url() is NOT a protected context - @prop inside url(@path) IS detected
-    const state = createContextState();
-
-    // Track context stack with brace depth for each level
-    // Each entry: { type: 'css' | 'js', braceDepth: number }
-    // We start in CSS context. {{ pushes 'js', @{ pushes 'css' inside js
-    // Shorthand is allowed when current context type is 'css'
-    type ContextEntry = { type: 'css' | 'js'; braceDepth: number };
-    const contextStack: ContextEntry[] = [{ type: 'css', braceDepth: 0 }];
-
-    // Track if we're in value position (after :)
-    let inValuePosition = false;
-
-    let i = 0;
-
-    while (i < cssZone.length) {
-      const char = cssZone[i]!;
-      const nextChar = cssZone[i + 1];
-
-      // Update context state (handles strings and comments)
-      const consumed = updateContextState(cssZone, i, state);
-      if (consumed === 2) {
-        i += 2;
-        continue;
-      }
-
-      // Skip string quote characters (already handled by updateContextState)
-      if (char === '"' || char === "'") {
-        i++;
-        continue;
-      }
-
-      // Skip if in protected context (strings, comments)
-      if (isInProtectedContext(state)) {
-        i++;
-        continue;
-      }
-
-      // Track context transitions
-      const currentEntry = contextStack[contextStack.length - 1]!;
-
-      // Check for {{ - enters JS context
-      if (char === '{' && nextChar === '{') {
-        contextStack.push({ type: 'js', braceDepth: 0 });
-        i += 2;
-        continue;
-      }
-
-      // Check for }} - exits JS context
-      if (char === '}' && nextChar === '}') {
-        // Pop until we find a 'js' context (may need to pop @{ css first)
-        while (contextStack.length > 1 && contextStack[contextStack.length - 1]!.type !== 'js') {
-          contextStack.pop();
-        }
-        if (contextStack.length > 1) {
-          contextStack.pop(); // pop the 'js'
-        }
-        i += 2;
-        continue;
-      }
-
-      // Check for @{ - enters CSS context (style block inside JS)
-      if (char === '@' && nextChar === '{' && currentEntry.type === 'js') {
-        contextStack.push({ type: 'css', braceDepth: 0 });
-        i += 2;
-        continue;
-      }
-
-      // Track single braces within @{ CSS context (for nested CSS blocks)
-      if (currentEntry.type === 'css' && contextStack.length > 1) {
-        // We're in a @{ block (not the root CSS context)
-        if (char === '{') {
-          currentEntry.braceDepth++;
-          inValuePosition = false;
-          i++;
-          continue;
-        }
-
-        if (char === '}') {
-          if (currentEntry.braceDepth > 0) {
-            // Closing a nested CSS block within @{
-            currentEntry.braceDepth--;
-            inValuePosition = false;
-          } else {
-            // Closing the @{ block itself
-            contextStack.pop();
-          }
-          i++;
-          continue;
-        }
-      }
-
-      // Get current context type
-      const currentContext = contextStack[contextStack.length - 1]!.type;
-
-      // Skip if in JS context (not inside a @{ block)
-      if (currentContext === 'js') {
-        i++;
-        continue;
-      }
-
-      // Track colon for value position
-      if (char === ':') {
-        inValuePosition = true;
-        i++;
-        continue;
-      }
-
-      // Reset on semicolon (end of declaration)
-      if (char === ';') {
-        inValuePosition = false;
-        i++;
-        continue;
-      }
-
-      // Reset on single opening brace (entering a new CSS block)
-      if (char === '{') {
-        inValuePosition = false;
-        i++;
-        continue;
-      }
-
-      // Reset on single closing brace (end of block)
-      if (char === '}') {
-        inValuePosition = false;
-        i++;
-        continue;
-      }
-
-      // Check for @ followed by letter (shorthand only works when starting with letter)
-      if (char === '@' && nextChar !== undefined && /^[a-zA-Z]$/.test(nextChar)) {
-        // Only detect in value position
-        if (inValuePosition) {
-          const startIndex = i;
-          i++; // Move past @
-
-          // Consume CSS identifier characters (letters, digits, hyphens, underscores)
-          let propName = '';
-          while (i < cssZone.length && Scanner.isCssIdentifierChar(cssZone[i]!)) {
-            propName += cssZone[i];
-            i++;
-          }
-
-          shorthands.push({
-            propName,
-            startIndex,
-            endIndex: i,
-          });
-          continue;
-        }
-      }
-
-      i++;
-    }
-
-    return shorthands;
-  }
-
-  /**
-   * Checks if a character is a valid CSS identifier character.
-   * Valid: a-z, A-Z, 0-9, -, _
-   */
-  private static isCssIdentifierChar(char: string): boolean {
-    return /^[a-zA-Z0-9_-]$/.test(char);
-  }
-
-  /**
    * Strips // single-line comments from CSS zone.
    *
    * Story 4.4: Single-Line Comment Stripping
@@ -902,7 +703,7 @@ export class Scanner {
    * - Full-line comments remove the entire line
    * - Inline comments preserve content before //
    *
-   * Note: url() is protected here (unlike $param/@prop) because
+   * Note: url() is protected here (unlike $param) because
    * url(https://...) contains // as part of the URL protocol.
    *
    * @param cssZone - The CSS zone content to process

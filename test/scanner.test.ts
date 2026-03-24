@@ -19,8 +19,8 @@ describe('Scanner', () => {
 
   describe('findSeparator()', () => {
     describe('basic zone detection', () => {
-      it('should find --- at column 0 and split zones', () => {
-        const scanner = new Scanner('const x = 1\n---\np { color: red; }');
+      it('should find --- delimiters and split zones', () => {
+        const scanner = new Scanner('---\nconst x = 1\n---\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -37,8 +37,8 @@ describe('Scanner', () => {
         expect(zones.cssZone).toBe('p { color: red; }');
       });
 
-      it('should handle empty preamble (--- at start)', () => {
-        const scanner = new Scanner('---\np { color: red; }');
+      it('should handle empty preamble (opening and closing delimiters with nothing between)', () => {
+        const scanner = new Scanner('---\n---\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -46,8 +46,8 @@ describe('Scanner', () => {
         expect(zones.cssZone).toBe('p { color: red; }');
       });
 
-      it('should handle empty CSS zone (--- at end)', () => {
-        const scanner = new Scanner('const x = 1\n---');
+      it('should handle empty CSS zone (opening delimiter, no closing)', () => {
+        const scanner = new Scanner('---\nconst x = 1');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -56,7 +56,7 @@ describe('Scanner', () => {
       });
 
       it('should handle --- with trailing whitespace', () => {
-        const scanner = new Scanner('const x = 1\n---   \np { color: red; }');
+        const scanner = new Scanner('---\nconst x = 1\n---   \np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -65,7 +65,7 @@ describe('Scanner', () => {
       });
 
       it('should handle Windows line endings (CRLF)', () => {
-        const scanner = new Scanner('const x = 1\r\n---\r\np { color: red; }');
+        const scanner = new Scanner('---\r\nconst x = 1\r\n---\r\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -76,7 +76,7 @@ describe('Scanner', () => {
 
     describe('separator with comment (Story 8.1)', () => {
       it('should recognize --- with comment after space', () => {
-        const scanner = new Scanner('const x = 1\n--- here starts CSS\np { color: red; }');
+        const scanner = new Scanner('---\nconst x = 1\n--- here starts CSS\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -85,7 +85,7 @@ describe('Scanner', () => {
       });
 
       it('should recognize --- with comment and no preamble', () => {
-        const scanner = new Scanner('--- just the reset\np { color: red; }');
+        const scanner = new Scanner('--- just the reset\n---\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -94,7 +94,7 @@ describe('Scanner', () => {
       });
 
       it('should recognize --- with tab before comment', () => {
-        const scanner = new Scanner('const x = 1\n---\tcomment\np { color: red; }');
+        const scanner = new Scanner('---\nconst x = 1\n---\tcomment\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -118,8 +118,8 @@ describe('Scanner', () => {
         expect(zones.cssZone).toBe('const x = 1\n---word\np { color: red; }');
       });
 
-      it('should still recognize bare --- (backward compatible)', () => {
-        const scanner = new Scanner('const x = 1\n---\np { color: red; }');
+      it('should still recognize bare ---', () => {
+        const scanner = new Scanner('---\nconst x = 1\n---\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -128,7 +128,7 @@ describe('Scanner', () => {
       });
 
       it('should not include comment text in either zone', () => {
-        const scanner = new Scanner('const x = 1\n--- this comment is discarded\np { color: red; }');
+        const scanner = new Scanner('---\nconst x = 1\n--- this comment is discarded\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.preamble).not.toContain('this comment is discarded');
@@ -136,7 +136,7 @@ describe('Scanner', () => {
       });
 
       it('should handle --- comment at EOF with no CSS below', () => {
-        const scanner = new Scanner('const x = 1\n--- end of preamble');
+        const scanner = new Scanner('---\nconst x = 1\n--- end of preamble');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -171,7 +171,7 @@ describe('Scanner', () => {
       });
 
       it('should find real --- after comment with ---', () => {
-        const scanner = new Scanner('/* comment with --- */\n---\np { color: red; }');
+        const scanner = new Scanner('---\n/* comment with --- */\n---\np { color: red; }');
         const zones = scanner.findSeparator();
 
         expect(zones.hasSeparator).toBe(true);
@@ -180,24 +180,30 @@ describe('Scanner', () => {
       });
     });
 
-    describe('error cases', () => {
-      it('should throw error for multiple --- separators', () => {
-        const scanner = new Scanner('const a = 1\n---\np { color: red; }\n---\np { color: blue; }');
+    describe('multiple delimiters', () => {
+      it('should use second --- as closing delimiter, extra --- in CSS zone', () => {
+        const scanner = new Scanner('---\nconst a = 1\n---\np { color: red; }\n---\np { color: blue; }');
+        const zones = scanner.findSeparator();
 
-        expect(() => scanner.findSeparator()).toThrow('Multiple --- separators');
+        expect(zones.hasSeparator).toBe(true);
+        expect(zones.preamble).toBe('const a = 1');
+        expect(zones.cssZone).toBe('p { color: red; }\n---\np { color: blue; }');
       });
 
-      it('should throw error for multiple --- even with content between', () => {
-        const scanner = new Scanner('a\n---\nb\n---\nc');
+      it('should use second --- as closing even with minimal content', () => {
+        const scanner = new Scanner('---\na\n---\nb\n---\nc');
+        const zones = scanner.findSeparator();
 
-        expect(() => scanner.findSeparator()).toThrow('Multiple --- separators');
+        expect(zones.hasSeparator).toBe(true);
+        expect(zones.preamble).toBe('a');
+        expect(zones.cssZone).toBe('b\n---\nc');
       });
     });
 
     describe('complex scenarios', () => {
       it('should handle multiline preamble with imports', () => {
         const scanner = new Scanner(
-          "import tokens from './tokens.json'\n\nconst $primary = tokens.colors.primary\n---\n.button { background: $primary; }"
+          "---\nimport tokens from './tokens.json'\n\nconst $primary = tokens.colors.primary\n---\n.button { background: $primary; }"
         );
         const zones = scanner.findSeparator();
 
@@ -210,7 +216,7 @@ describe('Scanner', () => {
 
       it('should handle multiline CSS with nested rules', () => {
         const scanner = new Scanner(
-          'const $color = "blue"\n---\n.parent {\n  color: $color;\n  .child {\n    color: red;\n  }\n}'
+          '---\nconst $color = "blue"\n---\n.parent {\n  color: $color;\n  .child {\n    color: red;\n  }\n}'
         );
         const zones = scanner.findSeparator();
 
@@ -220,7 +226,7 @@ describe('Scanner', () => {
 
       it('should handle --- appearing in CSS string literal (after separator)', () => {
         const scanner = new Scanner(
-          'const $label = "test"\n---\n.divider::after {\n  content: "---";\n  color: $label;\n}'
+          '---\nconst $label = "test"\n---\n.divider::after {\n  content: "---";\n  color: $label;\n}'
         );
         const zones = scanner.findSeparator();
 

@@ -316,12 +316,12 @@ p { color: red; }`;
       const input = `---
 .box {
   border: 1px solid;
-  // border-left: @border; -- commented out
+  // border-left: @(border); -- commented out
   padding: 8px;
 }`;
       const result = transpile(input);
       expect(result.code).not.toContain('// border-left');
-      expect(result.code).not.toContain('@border');
+      expect(result.code).not.toContain('@(border)');
     });
 
     it('strips // before processing $param', () => {
@@ -367,13 +367,6 @@ p { color: red; }
       const result = scanner.stripLineComments('// test\na { }');
       // Comment stripped, newline preserved
       expect(result).toBe('\na { }');
-    });
-
-    it('findStyleLookupShorthands() calls static method', () => {
-      const scanner = new Scanner('.box { border: 1px; }');
-      const result = scanner.findStyleLookupShorthands('.box { border-left: @border; }');
-      expect(result).toHaveLength(1);
-      expect(result[0]!.propName).toBe('border');
     });
   });
 });

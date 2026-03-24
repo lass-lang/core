@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { transpile } from '../src/index.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const fixturesDir = join(__dirname, 'fixtures');
 
 /**
  * Executes transpiled Lass code and returns the CSS output.
@@ -20,6 +25,9 @@ async function executeTranspiledCode(code: string): Promise<string> {
   try {
     const dataUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(code)}`;
     const module = await import(dataUrl);
+    if (typeof module.default !== 'string') {
+      throw new Error(`Transpiled module did not export a CSS string (got ${typeof module.default})`);
+    }
     return module.default;
   } finally {
     console.log = originalLog;
@@ -65,10 +73,11 @@ describe('Landing Example 1: CSS Passthrough', () => {
     expect(css).toBe(input);
   });
 
-  it('should use modern CSS features (nesting, custom properties, @layer)', () => {
-    expect(input).toContain('&');
-    expect(input).toContain('--card-bg');
-    expect(input).toContain('@layer');
+  it('should preserve modern CSS features (nesting, custom properties, @layer) in output', async () => {
+    const css = await lassToCSS(input);
+    expect(css).toContain('&');
+    expect(css).toContain('--card-bg');
+    expect(css).toContain('@layer');
   });
 });
 
@@ -101,6 +110,26 @@ describe('Landing Example 2: Design Token Import', () => {
 
   it('should generate CSS custom properties from token data', async () => {
     const css = await lassToCSS(input);
+    expect(css).toBe(expectedCSS);
+  });
+
+  it('should work with real import (as shown in README)', async () => {
+    // This tests the actual `import palette from './palette.json'` syntax
+    // shown on the landing page. The transpiler preserves the import statement;
+    // we rewrite the relative path to an absolute file:// URL so the dynamic
+    // import can resolve it outside a bundler context.
+    const importInput = `import palette from './palette.json'
+--- design token import
+:root {
+{{ Object.entries(palette.sun).map(([name, value]) => \`  --sun-\${name}: \${value};\`).join('\\n') }}
+}`;
+    const { code } = transpile(importInput);
+    const fixtureUrl = pathToFileURL(join(fixturesDir, 'palette.json')).href;
+    const resolvedCode = code.replace(
+      /from\s+['"]\.\/palette\.json['"]/,
+      `from '${fixtureUrl}' with { type: 'json' }`,
+    );
+    const css = await executeTranspiledCode(resolvedCode);
     expect(css).toBe(expectedCSS);
   });
 });
@@ -150,7 +179,7 @@ describe('Landing Example 4: @(prop) Lookup', () => {
 .button {
   border: 2px solid oklch(50% 0.2 250);
   outline-offset: 4px;
-  outline: @border;
+  outline: @(border);
 }`;
 
   const expectedCSS = `.button {
@@ -159,7 +188,7 @@ describe('Landing Example 4: @(prop) Lookup', () => {
   outline: 2px solid oklch(50% 0.2 250);
 }`;
 
-  it('should resolve @border to the previously declared value', async () => {
+  it('should resolve @(border) to the previously declared value', async () => {
     const css = await lassToCSS(input);
     expect(css).toBe(expectedCSS);
   });
@@ -182,26 +211,32 @@ describe('Landing Example 5: Tailwind + Lass Custom Variants', () => {
   }
 }) }}`;
 
-  it('should generate @custom-variant for each theme', async () => {
+  const expectedCSS = `@import "tailwindcss";
+
+@custom-variant theme-sunrise {
+  &:where([data-theme="sunrise"] *) {
+    @slot;
+  }
+}
+@custom-variant theme-noon {
+  &:where([data-theme="noon"] *) {
+    @slot;
+  }
+}
+@custom-variant theme-sunset {
+  &:where([data-theme="sunset"] *) {
+    @slot;
+  }
+}
+@custom-variant theme-midnight {
+  &:where([data-theme="midnight"] *) {
+    @slot;
+  }
+}`;
+
+  it('should produce exact expected CSS output', async () => {
     const css = await lassToCSS(input);
-
-    // Should contain @import as first line
-    expect(css).toContain('@import "tailwindcss";');
-
-    // Verify all four custom variants are generated
-    expect(css).toContain('@custom-variant theme-sunrise');
-    expect(css).toContain('@custom-variant theme-noon');
-    expect(css).toContain('@custom-variant theme-sunset');
-    expect(css).toContain('@custom-variant theme-midnight');
-  });
-
-  it('should generate correct selector structure for each variant', async () => {
-    const css = await lassToCSS(input);
-
-    // Each variant should have the data-theme selector and @slot
-    expect(css).toContain('&:where([data-theme="sunrise"] *)');
-    expect(css).toContain('&:where([data-theme="midnight"] *)');
-    expect(css).toContain('@slot;');
+    expect(css).toBe(expectedCSS);
   });
 
   it('should generate exactly 4 custom variants', async () => {

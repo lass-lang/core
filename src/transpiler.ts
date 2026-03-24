@@ -55,56 +55,11 @@ export function stripLineComments(cssZone: string): string {
 }
 
 // ============================================================================
-// STEP 3a: STYLE LOOKUP SHORTHAND NORMALIZATION
+// STEP 3: PROPERTY ACCESSOR RESOLUTION
 // ============================================================================
 
 /**
- * Step 3a: Normalize @prop shorthands to @(prop) form.
- *
- * Story 4.2: Style Lookup Shorthand
- *
- * Finds @prop patterns in CSS value position and converts them to @(prop).
- * This runs BEFORE @(prop) resolution so all lookups are handled uniformly.
- *
- * Detection rules:
- * - @prop shorthand only works when identifier starts with a letter [a-zA-Z]
- * - NOT detected inside {{ }} script blocks
- * - NOT detected inside protected contexts: strings, comments, url()
- *
- * @param cssZone - The CSS zone content
- * @returns CSS zone with @prop normalized to @(prop)
- */
-export function normalizeStyleLookupShorthands(cssZone: string): string {
-  if (!cssZone) {
-    return cssZone;
-  }
-
-  const shorthands = Scanner.findStyleLookupShorthandsStatic(cssZone);
-
-  if (shorthands.length === 0) {
-    return cssZone;
-  }
-
-  // Process from end to start so indices remain valid
-  let result = cssZone;
-
-  for (let i = shorthands.length - 1; i >= 0; i--) {
-    const shorthand = shorthands[i]!;
-    const { propName, startIndex, endIndex } = shorthand;
-
-    // Replace @prop with @(prop)
-    result = result.slice(0, startIndex) + `@(${propName})` + result.slice(endIndex);
-  }
-
-  return result;
-}
-
-// ============================================================================
-// STEP 3b: PROPERTY ACCESSOR RESOLUTION
-// ============================================================================
-
-/**
- * Step 3b: Resolve @(prop) accessors in CSS zone.
+ * Step 3: Resolve @(prop) accessors in CSS zone.
  *
  * Story 3.2: Basic Property Lookup
  * Story 3.3: Lookup in {{ }} Context

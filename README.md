@@ -69,10 +69,10 @@ try {
 
 The Lass transpiler supports the full language feature set:
 
-- **Two-zone model** - Use `---` separator to define a JS preamble zone followed by a CSS zone
+- **Two-zone model** - Use opening/closing `---` delimiters to define a JS preamble zone followed by a CSS zone
 - **Dollar substitution** - `$name` text substitution from preamble variables
 - **Expression interpolation** - `{{ expr }}` for inline JavaScript expressions
-- **Property lookup** - `@(prop)` or `@prop` shorthand to reference previously defined CSS property values
+- **Property lookup** - `@(prop)` to reference previously defined CSS property values
 - **Style blocks** - `@{ }` to embed CSS fragments generated from JavaScript
 - **Comment stripping** - `//` single-line comments are removed from output
 

@@ -193,9 +193,9 @@ describe('scope-tracker', () => {
   describe('findPropertyValue()', () => {
     describe('same-block reference', () => {
       it('should find property in current slice', () => {
-        // .box { border: 1px solid; outline: @border; }
-        const { slices } = cutByBraces('.box { border: 1px solid; outline: @border; }');
-        // Looking for "border" in slice 1 which contains "border: 1px solid; outline: @border;"
+        // .box { border: 1px solid; outline: @(border); }
+        const { slices } = cutByBraces('.box { border: 1px solid; outline: @(border); }');
+        // Looking for "border" in slice 1 which contains "border: 1px solid; outline: @(border);"
         const value = findPropertyValue('border', slices, 1);
         expect(value).toBe('1px solid');
       });
@@ -207,8 +207,8 @@ describe('scope-tracker', () => {
       });
 
       it('should return last value when property is declared multiple times', () => {
-        // .box { color: red; color: blue; outline-color: @color; }
-        const { slices } = cutByBraces('.box { color: red; color: blue; outline-color: @color; }');
+        // .box { color: red; color: blue; outline-color: @(color); }
+        const { slices } = cutByBraces('.box { color: red; color: blue; outline-color: @(color); }');
         const value = findPropertyValue('color', slices, 1);
         expect(value).toBe('blue');
       });
@@ -216,24 +216,24 @@ describe('scope-tracker', () => {
 
     describe('parent walk-up', () => {
       it('should find property in parent scope', () => {
-        // .parent { border: solid; .child { outline: @border; } }
-        const { slices } = cutByBraces('.parent { border: solid; .child { outline: @border; } }');
+        // .parent { border: solid; .child { outline: @(border); } }
+        const { slices } = cutByBraces('.parent { border: solid; .child { outline: @(border); } }');
         // slice 2 is inside .child, looking for "border" which is in slice 1 (parent)
         const value = findPropertyValue('border', slices, 2);
         expect(value).toBe('solid');
       });
 
       it('should find property in grandparent scope', () => {
-        // .grandparent { border: dashed; .parent { .child { outline: @border; } } }
-        const { slices } = cutByBraces('.grandparent { border: dashed; .parent { .child { outline: @border; } } }');
+        // .grandparent { border: dashed; .parent { .child { outline: @(border); } } }
+        const { slices } = cutByBraces('.grandparent { border: dashed; .parent { .child { outline: @(border); } } }');
         // slice 3 is .child, looking for "border" in grandparent (slice 1)
         const value = findPropertyValue('border', slices, 3);
         expect(value).toBe('dashed');
       });
 
       it('should find nearest ancestor when multiple ancestors have property', () => {
-        // .parent { border: solid; .child { border: dashed; .grandchild { outline: @border; } } }
-        const { slices } = cutByBraces('.parent { border: solid; .child { border: dashed; .grandchild { outline: @border; } } }');
+        // .parent { border: solid; .child { border: dashed; .grandchild { outline: @(border); } } }
+        const { slices } = cutByBraces('.parent { border: solid; .child { border: dashed; .grandchild { outline: @(border); } } }');
         // slice 3 is .grandchild, should find "dashed" from .child (slice 2), not "solid" from .parent
         const value = findPropertyValue('border', slices, 3);
         expect(value).toBe('dashed');
@@ -248,18 +248,18 @@ describe('scope-tracker', () => {
       });
 
       it('should return empty string for forward reference', () => {
-        // .box { outline: @border; border: solid; }
+        // .box { outline: @(border); border: solid; }
         // When looking for "border" at position before "border: solid;"
-        const { slices } = cutByBraces('.box { outline: @border; border: solid; }');
+        const { slices } = cutByBraces('.box { outline: @(border); border: solid; }');
         // Search only up to position 15 (before "border: solid")
         const value = findPropertyValue('border', slices, 1, 15);
         expect(value).toBe('');
       });
 
       it('should return empty string for self-reference', () => {
-        // .box { background: @background; }
-        const { slices } = cutByBraces('.box { background: @background; }');
-        // Position 0 means search empty string (nothing before @background)
+        // .box { background: @(background); }
+        const { slices } = cutByBraces('.box { background: @(background); }');
+        // Position 0 means search empty string (nothing before @(background))
         const value = findPropertyValue('background', slices, 1, 1);
         expect(value).toBe('');
       });
@@ -283,19 +283,19 @@ describe('scope-tracker', () => {
 
     describe('CSS at-rule vs property disambiguation', () => {
       it('should NOT match @propName: (CSS at-rule)', () => {
-        // border: 1px; @border { test: @border; }
+        // border: 1px; @border { test: @(border); }
         // The @border: at the start should not be matched
-        const { slices } = cutByBraces('border: 1px;\n@border { test: @border; }');
+        const { slices } = cutByBraces('border: 1px;\n@border { test: @(border); }');
         // slice 0 contains "border: 1px;\n@border "
-        // slice 1 contains " test: @border; "
+        // slice 1 contains " test: @(border); "
         const value = findPropertyValue('border', slices, 1);
-        // Should find "1px" from the property, not from @border
+        // Should find "1px" from the property, not from @border (at-rule)
         expect(value).toBe('1px');
       });
 
       it('should match property after at-rule on same property name', () => {
         // Tricky case: @color defined as at-rule, color defined as property
-        const css = '.test { color: blue; @color: green; background-color: @color; }';
+        const css = '.test { color: blue; @color: green; background-color: @(color); }';
         const { slices } = cutByBraces(css);
         const value = findPropertyValue('color', slices, 1);
         expect(value).toBe('blue');
@@ -336,12 +336,12 @@ describe('scope-tracker', () => {
 
     describe('JS scope skipping (Story 3.3)', () => {
       it('should skip JS-type slices and find property in parent CSS scope', () => {
-        // .box { color: blue; {{ @color }}; }
+        // .box { color: blue; {{ @(color) }}; }
         // slice 0: ".box " (css, parent: null)
         // slice 1: " color: blue; " (css, parent: 0)
-        // slice 2: " @color " (js, parent: 1)
+        // slice 2: " @(color) " (js, parent: 1)
         // slice 3: "; " (css, parent: 0)
-        const { slices } = cutByBraces('.box { color: blue; {{ @color }}; }');
+        const { slices } = cutByBraces('.box { color: blue; {{ @(color) }}; }');
         // Looking for "color" from inside the JS expression (slice 2)
         // Should skip JS slice and find in parent CSS slice (slice 1)
         const value = findPropertyValue('color', slices, 2);
@@ -350,7 +350,7 @@ describe('scope-tracker', () => {
 
       it('should find property through multiple JS scopes', () => {
         // Nested: CSS -> JS -> looking for property in CSS parent
-        const { slices } = cutByBraces('.box { padding: 10px; margin: {{ calc(@padding) }}; }');
+        const { slices } = cutByBraces('.box { padding: 10px; margin: {{ calc(@(padding)) }}; }');
         // Find the JS slice index
         const jsSliceIndex = slices.findIndex(s => s.type === 'js');
         const value = findPropertyValue('padding', slices, jsSliceIndex);
@@ -477,8 +477,8 @@ describe('scope-tracker', () => {
 
   describe('integration: scope isolation scenarios', () => {
     it('should NOT find property in sibling selector tree', () => {
-      // .sidebar { border: dotted; } .main { outline: @border; }
-      const { slices } = cutByBraces('.sidebar { border: dotted; } .main { outline: @border; }');
+      // .sidebar { border: dotted; } .main { outline: @(border); }
+      const { slices } = cutByBraces('.sidebar { border: dotted; } .main { outline: @(border); }');
       // slice 3 is .main's content, looking for "border" which is only in .sidebar (slice 1)
       // But .sidebar and .main are sibling trees - they don't share ancestry
       const value = findPropertyValue('border', slices, 3);
@@ -486,16 +486,16 @@ describe('scope-tracker', () => {
     });
 
     it('depth-based search stops at scope boundary', () => {
-      // .outer { border: solid; } .other { .inner { outline: @border; } }
-      const { slices } = cutByBraces('.outer { border: solid; } .other { .inner { outline: @border; } }');
+      // .outer { border: solid; } .other { .inner { outline: @(border); } }
+      const { slices } = cutByBraces('.outer { border: solid; } .other { .inner { outline: @(border); } }');
       // .inner's parent chain: slice 4 -> slice 3 (.other content) -> no further (slice 2 is ".other" selector, parent null)
       // .outer is a sibling tree, not reachable via parent chain
       const value = findPropertyValue('border', slices, 4);
       expect(value).toBe('');
     });
 
-    it('should find property when {{ }} expression is between declaration and @prop reference', () => {
-      // Critical test: Phase 1 (@prop) runs BEFORE Phase 2 ({{ }})
+    it('should find property when {{ }} expression is between declaration and @(prop) reference', () => {
+      // Critical test: @(prop) resolution uses scope tracking
       // The {{ }} creates its own depth level but shouldn't block property lookup
       const css = `.test {
     color: blue;
@@ -503,12 +503,12 @@ describe('scope-tracker', () => {
         background: green;
     }
     {{ "border: black;" }}
-    outline: @color;
+    outline: @(color);
 }`;
       const { slices } = cutByBraces(css);
       
-      // Find the slice containing @color reference
-      const sliceWithRef = slices.findIndex(s => s.content.includes('@color'));
+      // Find the slice containing @(color) reference
+      const sliceWithRef = slices.findIndex(s => s.content.includes('@(color)'));
       expect(sliceWithRef).toBeGreaterThan(0);
       
       // Should find "blue" by walking up parent chain
@@ -521,41 +521,41 @@ describe('scope-tracker', () => {
     border: 1px solid;
     {{ expr1 }}
     {{ expr2 }}
-    outline: @border;
+    outline: @(border);
 }`;
       const { slices } = cutByBraces(css);
-      const sliceWithRef = slices.findIndex(s => s.content.includes('@border'));
+      const sliceWithRef = slices.findIndex(s => s.content.includes('@(border)'));
       const value = findPropertyValue('border', slices, sliceWithRef);
       expect(value).toBe('1px solid');
     });
 
     it('should find property after nested child block closes', () => {
-      // Property declared, then nested child, then @prop reference
+      // Property declared, then nested child, then @(prop) reference
       const css = `.test {
     color: blue;
     .css-child {
         background: green;
     }
-    outline: @color;
+    outline: @(color);
 }`;
       const { slices } = cutByBraces(css);
-      const sliceWithRef = slices.findIndex(s => s.content.includes('@color'));
+      const sliceWithRef = slices.findIndex(s => s.content.includes('@(color)'));
       const value = findPropertyValue('color', slices, sliceWithRef);
       expect(value).toBe('blue');
     });
 
     it('should find property with nested child AND {{ }} in same block', () => {
-      // Combined case: nested CSS child + JS expression + @prop reference
+      // Combined case: nested CSS child + JS expression + @(prop) reference
       const css = `.test {
     color: blue;
     .css-child {
         background: green;
     }
     {{ "border: black;" }}
-    outline: @color;
+    outline: @(color);
 }`;
       const { slices } = cutByBraces(css);
-      const sliceWithRef = slices.findIndex(s => s.content.includes('@color'));
+      const sliceWithRef = slices.findIndex(s => s.content.includes('@(color)'));
       const value = findPropertyValue('color', slices, sliceWithRef);
       expect(value).toBe('blue');
     });

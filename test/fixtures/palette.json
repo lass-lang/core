@@ -1,0 +1,8 @@
+{
+  "sun": {
+    "morning": "oklch(85% 0.12 85)",
+    "noon":    "oklch(95% 0.08 95)",
+    "sunset":  "oklch(65% 0.18 35)",
+    "nadir":   "oklch(15% 0.05 270)"
+  }
+}

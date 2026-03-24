@@ -265,7 +265,7 @@ function getContextOpenedBy(contextStack: ContextFrame[]): BraceType {
  * Finds the value of a CSS property by searching the scope tree.
  *
  * Story 3.3: Algorithm using parent references:
- * 1. Search current slice (up to the position before @prop)
+ * 1. Search current slice (up to the position before @(prop))
  * 2. Search earlier sibling slices (same parent, earlier index)
  * 3. Walk up to parent and repeat
  * 4. Stop when we reach a root slice (parent: null) and exhaust all earlier siblings
@@ -275,7 +275,7 @@ function getContextOpenedBy(contextStack: ContextFrame[]): BraceType {
  *
  * @param propName - The property name to look up (e.g., "border")
  * @param slices - The slices from cutByBraces()
- * @param currentIndex - Index of the slice containing the @prop reference
+ * @param currentIndex - Index of the slice containing the @(prop) reference
  * @param positionInSlice - Character position in current slice (for self-reference protection)
  * @returns The property value, or empty string if not found
  */

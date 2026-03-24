@@ -46,7 +46,7 @@ describe('transpile()', () => {
 
   describe('two-zone output with preamble execution (Story 2.2)', () => {
     it('should include preamble in output (Story 2.2)', () => {
-      const { code } = transpile("---\nconst x = 'blue'\n---\np { color: blue; }");
+      const { code } = transpile("const x = 'blue'\n---\np { color: blue; }");
 
       // Story 2.2: Preamble IS included in output and will execute
       expect(code).toContain("const x = 'blue'");
@@ -54,19 +54,19 @@ describe('transpile()', () => {
     });
 
     it('should handle empty preamble', () => {
-      const { code } = transpile('---\n---\np { color: red; }');
+      const { code } = transpile('---\np { color: red; }');
       // Empty preamble - just export
       expect(code).toBe('export default `p { color: red; }`;');
     });
 
     it('should handle whitespace-only preamble as empty', () => {
-      const { code } = transpile('---\n   \n---\np { color: red; }');
+      const { code } = transpile('   \n---\np { color: red; }');
       // Whitespace-only preamble treated as empty - just export
       expect(code).toBe('export default `p { color: red; }`;');
     });
 
     it('should handle empty CSS zone with preamble', () => {
-      const { code } = transpile("---\nconst x = 'test'\n---");
+      const { code } = transpile("const x = 'test'\n---");
       // Preamble included, empty CSS zone
       expect(code).toContain("const x = 'test'");
       expect(code).toContain('export default ``;');
@@ -74,7 +74,7 @@ describe('transpile()', () => {
 
     it('should NOT escape dollar signs in CSS zone', () => {
       // For Story 2.2, $name should appear literally ($name substitution is Epic 4, Story 4.x)
-      const { code } = transpile("---\nconst $color = 'blue'\n---\np { color: $color; }");
+      const { code } = transpile("const $color = 'blue'\n---\np { color: $color; }");
       // Dollar should NOT be escaped - it will be used for $name substitution in Epic 4
       expect(code).not.toContain('\\$');
       expect(code).toContain('$color');
@@ -83,7 +83,7 @@ describe('transpile()', () => {
     });
 
     it('should return CSS zone when executed (preamble runs but CSS is export)', async () => {
-      const { code } = transpile("---\nconst x = 'test'\n---\np { color: red; }");
+      const { code } = transpile("const x = 'test'\n---\np { color: red; }");
       const css = await executeTranspiledCode(code);
       // CSS output is the CSS zone content (preamble executed but doesn't affect export)
       expect(css).toBe('p { color: red; }');
@@ -106,7 +106,7 @@ p { margin: 10px; }`;
     });
 
     it('should preserve preamble structure with blank line before export', () => {
-      const { code } = transpile("---\nconst x = 1\n---\np { }");
+      const { code } = transpile("const x = 1\n---\np { }");
       // Should have preamble, then blank line, then export
       expect(code).toBe("const x = 1\n\nexport default `p { }`;");
     });
@@ -143,7 +143,7 @@ p { margin: 10px; }`;
 
     it('should make preamble variables available for future substitution', async () => {
       // This test verifies structure - actual substitution is Story 2.3
-      const { code } = transpile("---\nconst color = 'blue'\n---\np { color: $color; }");
+      const { code } = transpile("const color = 'blue'\n---\np { color: $color; }");
 
       // Preamble defines variable
       expect(code).toContain("const color = 'blue'");
@@ -180,21 +180,21 @@ p { margin: 10px; }`;
     // These tests verify internal implementation details only.
 
     it('should wrap expressions in __lassScriptExpression helper (Story 2.4)', () => {
-      const { code } = transpile('---\nconst color = "blue"\n---\n.box { color: {{ color }}; }');
+      const { code } = transpile('const color = "blue"\n---\n.box { color: {{ color }}; }');
 
       // Should contain ${__lassScriptExpression(color)} interpolation (Story 2.4: wraps expressions)
       expect(code).toContain('${__lassScriptExpression(color)}');
     });
 
     it('should include __lassScriptExpression helper function when expressions present', () => {
-      const { code } = transpile('---\nconst color = "blue"\n---\n.box { color: {{ color }}; }');
+      const { code } = transpile('const color = "blue"\n---\n.box { color: {{ color }}; }');
 
       // Should contain the helper function
       expect(code).toContain('const __lassScriptExpression');
     });
 
     it('should remove {{ }} markers from output', () => {
-      const { code } = transpile('---\nconst color = "blue"\n---\n.box { color: {{ color }}; }');
+      const { code } = transpile('const color = "blue"\n---\n.box { color: {{ color }}; }');
 
       // Should not contain {{ }}
       expect(code).not.toContain('{{');

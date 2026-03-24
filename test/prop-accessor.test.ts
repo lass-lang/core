@@ -154,9 +154,9 @@ describe('Scanner.findPropertyAccessors', () => {
   });
 
   describe('@(prop) requires explicit parentheses', () => {
-    test('@prop without parens is NOT detected (would need shorthand)', () => {
+    test('@prop without parens is NOT detected', () => {
       const scanner = new Scanner('');
-      // @border without parens is not detected - requires @(border)
+      // @border without parens is not detected - only @(border) is recognized
       const result = scanner.findPropertyAccessors('.box { test: @border; }');
       expect(result).toHaveLength(0);
     });

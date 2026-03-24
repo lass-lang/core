@@ -7,11 +7,10 @@
  * Transpilation Pipeline (The Story):
  * 1. detectZones() - Split source into preamble and CSS zones
  * 2. stripLineComments() - Remove // comments from CSS zone
- * 3. normalizeStyleLookupShorthands() - @prop -> @(prop)
- * 4. resolvePropertyAccessors() - @(prop) -> value
- * 5. resolveDollarVariables() - $param -> ${...}
- * 6. processExpressions() - {{ expr }} -> ${...}
- * 7. buildOutput() - Assemble final JS module
+ * 3. resolvePropertyAccessors() - @(prop) -> value
+ * 4. resolveDollarVariables() - $param -> ${...}
+ * 5. processExpressions() - {{ expr }} -> ${...}
+ * 6. buildOutput() - Assemble final JS module
  *
  * This is the "igloo" view - each function is a building block.
  * Drill into transpiler.ts for step implementations.
@@ -20,7 +19,6 @@
 import {
   detectZones,
   stripLineComments,
-  normalizeStyleLookupShorthands,
   resolvePropertyAccessors,
   resolveDollarVariables,
   processExpressions,
@@ -38,11 +36,10 @@ import type { TranspileResult, TranspileOptions } from './types.js';
  * The Story (Igloo Principle):
  * 1. Split the file into preamble and CSS zones at the ---
  * 2. Strip // comments from CSS zone
- * 3. Normalize @prop -> @(prop) shorthands
- * 4. Resolve @(prop) accessors to their values
- * 5. Replace $param with ${...} for variable substitution
- * 6. Find {{ expressions }} and make them interpolations
- * 7. Wrap it all in a JS module that exports CSS
+ * 3. Resolve @(prop) accessors to their values
+ * 4. Replace $param with ${...} for variable substitution
+ * 5. Find {{ expressions }} and make them interpolations
+ * 6. Wrap it all in a JS module that exports CSS
  *
  * Implementation History:
  * - Story 1.4: CSS passthrough - wraps input in JS module export
@@ -55,8 +52,8 @@ import type { TranspileResult, TranspileOptions } from './types.js';
  * - Story 3.3: @(prop) in {{ }} - detects @(prop) inside expressions, quotes values for JS context
  * - Refactored: Changed from @prop to @(prop) for unambiguous syntax (supports custom properties)
  * - Story 4.1: $param substitution - replaces $param with ${$param} for template literal interpolation
- * - Story 4.2: @prop shorthand - normalizes @prop to @(prop) before resolution
  * - Story 4.4: // comment stripping - removes single-line comments from CSS zone
+ * - Story 8.2: @prop shorthand removed - was conflicting with CSS at-rules (@slot, @custom-variant, etc.)
  *
  * @param source - The Lass source code
  * @param options - Transpilation options
@@ -72,11 +69,8 @@ export function transpile(
   // Step 2: Strip // comments from CSS zone (before any symbol resolution)
   const strippedCssZone = stripLineComments(zones.cssZone);
 
-  // Step 3a: Normalize @prop shorthands to @(prop) form
-  const normalizedCssZone = normalizeStyleLookupShorthands(strippedCssZone);
-
-  // Step 3b: Resolve @(prop) accessors (Phase 1 - before {{ }} processing)
-  const resolvedCssZone = resolvePropertyAccessors(normalizedCssZone, options);
+  // Step 3: Resolve @(prop) accessors (Phase 1 - before {{ }} processing)
+  const resolvedCssZone = resolvePropertyAccessors(strippedCssZone, options);
 
   // Step 4: Replace $param with __lassScriptLookup() calls for variable substitution
   const dollarResult = resolveDollarVariables(resolvedCssZone, options);
@@ -109,9 +103,8 @@ export { Scanner } from './scanner.js';
  * - ExpressionSplit: Result of {{ }} expression splitting
  * - PropertyAccessor: Info about detected @(prop) accessor (propName, indices)
  * - DollarVariable: Info about detected $param variable (varName, indices)
- * - StyleLookupShorthand: Info about detected @prop shorthand (propName, indices)
  */
-export type { ScanResult, ScanOptions, ZoneSplit, ExpressionSplit, PropertyAccessor, DollarVariable, StyleLookupShorthand } from './scanner.js';
+export type { ScanResult, ScanOptions, ZoneSplit, ExpressionSplit, PropertyAccessor, DollarVariable } from './scanner.js';
 
 // ============================================================================
 // RE-EXPORTS: ERRORS

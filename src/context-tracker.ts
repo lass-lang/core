@@ -1,10 +1,9 @@
 /**
  * Shared context tracking utilities for protected zones in CSS.
  *
- * Story 4.2: Extracted to reduce code duplication between
- * findDollarVariablesStatic() and findStyleLookupShorthandsStatic().
+ * Extracted to reduce code duplication between scanner methods.
  *
- * Protected contexts are zones where Lass symbols ($param, @prop) should
+ * Protected contexts are zones where Lass symbols ($param, @(prop)) should
  * NOT be detected:
  * - String literals ("..." or '...')
  * - Block comments (slash-star ... star-slash)
@@ -37,7 +36,7 @@ export function createContextState(): ContextState {
 
 /**
  * Checks if currently in a protected context (string or block comment).
- * Protected contexts prevent symbol detection for $param and @prop.
+ * Protected contexts prevent symbol detection for $param and @(prop).
  *
  * Note: url() is NOT a protected context - only strings and comments are.
  */
