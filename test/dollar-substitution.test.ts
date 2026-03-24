@@ -262,7 +262,8 @@ describe('transpile() with $param substitution', () => {
 
   describe('basic substitution (AC3, AC4)', () => {
     it('should substitute $param in CSS value', () => {
-      const source = `const $color = 'red'
+      const source = `---
+const $color = 'red'
 ---
 p {
   color: $color;
@@ -282,7 +283,8 @@ p {
     });
 
     it('should substitute multiple $params', () => {
-      const source = `const $primary = '#3b82f6'
+      const source = `---
+const $primary = '#3b82f6'
 const $radius = '8px'
 ---
 .button {
@@ -302,7 +304,8 @@ const $radius = '8px'
     });
 
     it('should perform text-only substitution (no evaluation)', () => {
-      const source = `const $gap = 23
+      const source = `---
+const $gap = 23
 ---
 .box {
   padding: $gap * 2;
@@ -317,7 +320,8 @@ const $radius = '8px'
     });
 
     it('should work inside calc() for valid CSS', () => {
-      const source = `const $gap = 23
+      const source = `---
+const $gap = 23
 ---
 .box {
   padding: calc($gap * 2);
@@ -331,7 +335,8 @@ const $radius = '8px'
     });
 
     it('should substitute numeric values', () => {
-      const source = `const $cols = 12
+      const source = `---
+const $cols = 12
 ---
 .grid {
   grid-template-columns: repeat($cols, 1fr);
@@ -347,7 +352,8 @@ const $radius = '8px'
 
   describe('selector position (AC5)', () => {
     it('should substitute $param in selector', () => {
-      const source = `const $component = 'card'
+      const source = `---
+const $component = 'card'
 ---
 .$component {
   display: block;
@@ -361,7 +367,8 @@ const $radius = '8px'
     });
 
     it('should handle hyphen as identifier boundary', () => {
-      const source = `const $prefix = 'app'
+      const source = `---
+const $prefix = 'app'
 ---
 .$prefix-header {
   display: flex;
@@ -377,7 +384,8 @@ const $radius = '8px'
 
   describe('protected contexts (AC2)', () => {
     it('should NOT substitute $param inside double-quoted string', () => {
-      const source = `const $color = 'red'
+      const source = `---
+const $color = 'red'
 ---
 .quote {
   content: "the value is $color";
@@ -391,7 +399,8 @@ const $radius = '8px'
     });
 
     it('should substitute $param inside url() - url is NOT protected', () => {
-      const source = `const $path = 'images'
+      const source = `---
+const $path = 'images'
 ---
 .bg {
   background: url(/$path/hero.png);
@@ -406,7 +415,8 @@ const $radius = '8px'
     });
 
     it('should NOT substitute $param inside url() with quoted string', () => {
-      const source = `const $path = 'images'
+      const source = `---
+const $path = 'images'
 ---
 .bg {
   background: url("/$path/hero.png");
@@ -421,7 +431,8 @@ const $radius = '8px'
     });
 
     it('should NOT substitute $param inside block comment', () => {
-      const source = `const $var = 'test'
+      const source = `---
+const $var = 'test'
 ---
 /* $var is documented */
 p { color: red; }`;
@@ -436,7 +447,8 @@ p { color: red; }`);
   describe('$-prefixed visibility (AC3)', () => {
     it('should only see $-prefixed variables', () => {
       // Note: url() without quotes is NOT protected - $urlHeader IS substituted
-      const source = `const headerImages = ['ici']
+      const source = `---
+const headerImages = ['ici']
 const $urlHeader = headerImages[0]
 ---
 .h {
@@ -456,7 +468,8 @@ const $urlHeader = headerImages[0]
   describe('value coercion (AC4)', () => {
     it('should coerce object to [object Object]', () => {
       // $obj outside string is substituted, inside string is literal
-      const source = `const $obj = { a: 1 }
+      const source = `---
+const $obj = { a: 1 }
 ---
 p {
   --data: $obj;
@@ -471,7 +484,8 @@ p {
 
     it('should preserve $x for undefined value', () => {
       // undefined value → preserve $name unchanged
-      const source = `const $x = undefined
+      const source = `---
+const $x = undefined
 ---
 p {
   --data: $x;
@@ -486,7 +500,8 @@ p {
 
     it('should output unset for null value', () => {
       // null value → 'unset'
-      const source = `const $x = null
+      const source = `---
+const $x = null
 ---
 p {
   border: $x;
@@ -501,8 +516,7 @@ p {
 
     it('should preserve $missing for non-existent variable', () => {
       // Non-existent variable → preserve $name unchanged
-      const source = `---
-p {
+      const source = `p {
   border: $missing;
 }`;
       const result = transpile(source);
@@ -516,8 +530,7 @@ p {
 
   describe('bare $ handling (AC7)', () => {
     it('should preserve bare $ as literal text', () => {
-      const source = `---
-p {
+      const source = `p {
   content: "costs $";
 }
 .price::after {
@@ -537,7 +550,8 @@ p {
 
   describe('transpiled output format (AC6)', () => {
     it('should convert $param to __lassScriptLookup call in template literal', () => {
-      const source = `const $color = 'red'
+      const source = `---
+const $color = 'red'
 ---
 p { color: $color; }`;
       const result = transpile(source);
@@ -551,7 +565,7 @@ p { color: $color; }`;
     });
 
     it('should include __lassScriptLookup helper only when needed', () => {
-      const sourceWithDollar = `const $x = 1\n---\np { width: $x; }`;
+      const sourceWithDollar = `---\nconst $x = 1\n---\np { width: $x; }`;
       const sourceWithoutDollar = `---\np { width: 100px; }`;
 
       const resultWith = transpile(sourceWithDollar);
@@ -564,7 +578,8 @@ p { color: $color; }`;
 
   describe('ordering: $param before {{ }}', () => {
     it('should process $param before {{ }} expressions', () => {
-      const source = `const $x = 10
+      const source = `---
+const $x = 10
 const y = 5
 ---
 .box {
@@ -581,7 +596,8 @@ const y = 5
     });
 
     it('should handle $param and {{ }} in same declaration', () => {
-      const source = `const $gap = 8
+      const source = `---
+const $gap = 8
 const multiplier = 2
 ---
 .box {
@@ -600,7 +616,8 @@ const multiplier = 2
   describe('{{ }} escape hatch in protected contexts', () => {
     it('should use {{ $param }} to substitute inside quoted url()', () => {
       // $param inside quoted string is protected, but {{ }} is universal
-      const source = `const $path = 'images'
+      const source = `---
+const $path = 'images'
 ---
 .bg {
   background: url("/$path/hero.png");
@@ -616,7 +633,8 @@ const multiplier = 2
     });
 
     it('should use {{ $param }} to substitute inside double-quoted string', () => {
-      const source = `const $name = 'World'
+      const source = `---
+const $name = 'World'
 ---
 .greeting {
   content: "Hello $name!";
@@ -632,7 +650,8 @@ const multiplier = 2
     });
 
     it('should use {{ $param }} to substitute inside block comment', () => {
-      const source = `const $version = '1.0.0'
+      const source = `---
+const $version = '1.0.0'
 ---
 /* Version: $version */
 /* Version: {{ $version }} */

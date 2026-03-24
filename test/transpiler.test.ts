@@ -90,7 +90,8 @@ describe('transpile()', () => {
     });
 
     it('should include multiline preamble in output', () => {
-      const input = `const $a = 1
+      const input = `---
+const $a = 1
 const $b = 2
 const $c = $a + $b
 ---
@@ -112,7 +113,8 @@ p { margin: 10px; }`;
     });
 
     it('should handle multiline CSS', () => {
-      const input = `const x = 1
+      const input = `---
+const x = 1
 ---
 .parent {
   color: red;
@@ -134,7 +136,7 @@ p { margin: 10px; }`;
       // Spy on console.log to verify preamble execution
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      const { code } = transpile('console.log("preamble ran")\n---\np { }');
+      const { code } = transpile('---\nconsole.log("preamble ran")\n---\np { }');
       await executeTranspiledCode(code);
 
       expect(consoleSpy).toHaveBeenCalledWith('preamble ran');

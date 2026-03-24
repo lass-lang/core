@@ -88,7 +88,8 @@ describe('Landing Example 1: CSS Passthrough', () => {
 describe('Landing Example 2: Design Token Import', () => {
   // For testing, we inline the palette data instead of using import (which
   // requires file resolution). The transpile output is structurally identical.
-  const input = `const palette = {
+  const input = `---
+const palette = {
   sun: {
     morning: "oklch(85% 0.12 85)",
     noon:    "oklch(95% 0.08 95)",
@@ -118,7 +119,8 @@ describe('Landing Example 2: Design Token Import', () => {
     // shown on the landing page. The transpiler preserves the import statement;
     // we rewrite the relative path to an absolute file:// URL so the dynamic
     // import can resolve it outside a bundler context.
-    const importInput = `import palette from './palette.json'
+    const importInput = `---
+import palette from './palette.json'
 --- design token import
 :root {
 {{ Object.entries(palette.sun).map(([name, value]) => \`  --sun-\${name}: \${value};\`).join('\\n') }}
@@ -139,7 +141,8 @@ describe('Landing Example 2: Design Token Import', () => {
 // =============================================================================
 
 describe('Landing Example 3: Sass @each → Lass .map()', () => {
-  const input = `const sizes = [4, 8, 16, 24, 32]
+  const input = `---
+const sizes = [4, 8, 16, 24, 32]
 --- generate gap utilities
 {{ sizes.map(s => @{
 .gap-\${s} {
@@ -175,8 +178,7 @@ describe('Landing Example 3: Sass @each → Lass .map()', () => {
 // =============================================================================
 
 describe('Landing Example 4: @(prop) Lookup', () => {
-  const input = `--- component with derived values
-.button {
+  const input = `.button {
   border: 2px solid oklch(50% 0.2 250);
   outline-offset: 4px;
   outline: @(border);
@@ -199,7 +201,8 @@ describe('Landing Example 4: @(prop) Lookup', () => {
 // =============================================================================
 
 describe('Landing Example 5: Tailwind + Lass Custom Variants', () => {
-  const input = `const themes = ["sunrise", "noon", "sunset", "midnight"]
+  const input = `---
+const themes = ["sunrise", "noon", "sunset", "midnight"]
 ---
 @import "tailwindcss";
 

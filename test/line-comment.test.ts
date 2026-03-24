@@ -282,8 +282,7 @@ describe('Story 4.4: Single-Line Comment Stripping', () => {
 
   describe('Transpiler integration (AC9)', () => {
     it('strips // comments from CSS zone', () => {
-      const input = `---
-// this comment is stripped
+      const input = `// this comment is stripped
 p {
   color: red; // inline stripped
 }`;
@@ -294,7 +293,8 @@ p {
     });
 
     it('preserves // in preamble (JS zone)', () => {
-      const input = `// This is a JS comment
+      const input = `---
+// This is a JS comment
 const $x = 1; // inline JS comment
 ---
 p { color: red; }`;
@@ -313,8 +313,7 @@ p { color: red; }`;
     });
 
     it('strips // before processing @(prop)', () => {
-      const input = `---
-.box {
+      const input = `.box {
   border: 1px solid;
   // border-left: @(border); -- commented out
   padding: 8px;
@@ -325,7 +324,8 @@ p { color: red; }`;
     });
 
     it('strips // before processing $param', () => {
-      const input = `const $color = 'red';
+      const input = `---
+const $color = 'red';
 ---
 p {
   // color: $color; -- commented out
@@ -354,8 +354,7 @@ p { color: red; }`;
     });
 
     it('throws error for unclosed /* */ in transpile', () => {
-      const input = `---
-p { color: red; }
+      const input = `p { color: red; }
 /* unclosed comment`;
       expect(() => transpile(input)).toThrow(LassTranspileError);
     });
