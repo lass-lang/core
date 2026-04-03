@@ -31,7 +31,7 @@
     "@changesets/cli": "^2.29.8",
     "@lass-lang/docs": "workspace:*",
     "husky": "^9.1.7",
-    "typescript": "^5.7.0",
+    "typescript": "^6.0.2",
     "vitest": "^4.0.18"
   },
   "keywords": [
